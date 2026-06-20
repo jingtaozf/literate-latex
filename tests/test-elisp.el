@@ -109,6 +109,27 @@
         (should-error (literate-latex-tangle (llt-fixture "noweb-undefined.pamphlet") out))
       (ignore-errors (delete-file out)))))
 
+;;; --- editing major mode --------------------------------------------------
+
+(ert-deftest llt-major-mode ()
+  "`literate-latex-mode' activates with chunk imenu, keys and navigation."
+  (with-temp-buffer
+    (insert-file-contents (llt-fixture "cl-demo.pamphlet"))
+    (literate-latex-mode)
+    (should (eq major-mode 'literate-latex-mode))
+    (should (derived-mode-p 'latex-mode))
+    (let ((idx (literate-latex--imenu-index)))
+      (should (assoc "greet" idx))
+      (should (assoc "add" idx))
+      (should (assoc "scratch" idx)))
+    (should (eq (lookup-key literate-latex-mode-map (kbd "C-c C-j"))
+                'literate-latex-goto-chunk))
+    (should (eq (lookup-key literate-latex-mode-map (kbd "C-c C-c"))
+                'literate-latex-compile))
+    (goto-char (point-min))
+    (literate-latex-goto-chunk "add")
+    (should (looking-at "[ \t]*\\\\begin{chunk}{add}"))))
+
 ;;; --- typeset to PDF ------------------------------------------------------
 
 (ert-deftest llt-compile-pdf ()

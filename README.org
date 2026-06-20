@@ -1,188 +1,128 @@
 #+TITLE: literate-latex
-#+OPTIONS: toc:2
+#+OPTIONS: toc:nil
 
-Literate programming where the document is a *LaTeX pamphlet* and the
-source is loaded *directly* from it --- no tangle step --- in the spirit
-of [[https://github.com/jingtaozf/literate-elisp][literate-elisp]] and [[https://github.com/jingtaozf/literate-lisp][literate-lisp]], but with LaTeX prose instead of
-Org and an [[https://github.com/daly/axiom][Axiom]]-pamphlet-style ~chunk~ syntax.
+Write code inside a LaTeX document and *load it directly* --- no tangle
+step. One =.pamphlet= file is both the source your runtime loads and the
+document =pdflatex= typesets. In the spirit of [[https://github.com/jingtaozf/literate-elisp][literate-elisp]] /
+[[https://github.com/jingtaozf/literate-lisp][literate-lisp]], with [[https://github.com/daly/axiom][Axiom]]-style ~\begin{chunk}~ syntax.
 
-* Overview
+Direct load works for *Common Lisp* and *Emacs Lisp* (their readers are
+programmable). Any language --- or out-of-order assembly --- can use the
+optional noweb ~\getchunk~ tangle path instead.
 
-A pamphlet (=.pamphlet= / =.tex=) is an ordinary LaTeX document. Code
-lives in ~chunk~ environments; everything around them is prose. The one
-file serves two readers:
+* Quick start
 
-- =pdflatex= / =latexmk= *typesets* it to a PDF.
-- the language runtime *loads* it as source, skipping the LaTeX and
-  reading only the chunk bodies --- with no intermediate file.
-
-This is the design the user picked as *方案乙*: direct load by default,
-optional reorder when you need it.
-
-| Need | Path |
-|------+------|
-| Daily Common Lisp / Emacs Lisp development | direct load, document order, no tangle |
-| Out-of-order assembly, or a non-Lisp language | optional ~tangle~ (noweb-style ~\getchunk~ expansion) |
-
-* Why no tangle is possible (and where it is not)
-
-Direct load works only where the host *reader is programmable*:
-
-| Tier | Language | Mechanism |
-|------+----------+-----------|
-| Direct load | Common Lisp | private readtable makes ~\~ a macro char; it flips between prose-skip and code at ~\begin{chunk}~ / ~\end{chunk}~ (cf. literate-lisp's ~#~ dispatch) |
-| Direct load | Emacs Lisp | ~load-read-function~ line state machine (port of literate-elisp) |
-| Tangle only | Python, C, … | the reader cannot skip prose, so assemble a real source file via ~\getchunk~ expansion |
-
-Axiom's classic pamphlets are the *tangle-only* model for every language
-(code is wrapped in =verbatim=, so the compiler can never read it
-directly). literate-latex keeps that syntax but adds the direct-load
-tier for Lisp.
-
-* The format
+Write =hello.pamphlet=:
 
 #+BEGIN_SRC latex
+% -*- mode: literate-latex; literate-lang: lisp -*-
 \documentclass{article}
 \usepackage{literate-latex}
 \begin{document}
-
-\section{A function}
-Prose explaining why.
-\begin{chunk}{greet}
-(defun greet (name) (format nil "Hello, ~a!" name))
+\section{Hello}
+A greeting.
+\begin{chunk}{hello}
+(defun hello (name) (format nil "Hello, ~a!" name))
 \end{chunk}
-
 \end{document}
 #+END_SRC
 
-Chunk header grammar:
-
-#+BEGIN_SRC text
-\begin{chunk}[KEY=VAL,KEY=VAL]{chunk name}
-... code ...
-\end{chunk}
-#+END_SRC
-
-- ~load=no~ --- the loader skips this chunk (default ~yes~; ~test~ loads
-  only when the loader opts in).
-- ~lang=elisp~ --- only the matching loader reads it; unspecified means
-  "any loader". This lets one pamphlet mix languages.
-- Same-named chunks concatenate, as in Axiom.
-- ~\getchunk{name}~ is a *tangle-time* reference (see below). In
-  direct-load files chunk bodies are pure code and contain no
-  ~\getchunk~.
-
-The first line may carry a modeline; for Emacs Lisp declare lexical
-binding there (literate-latex teaches Emacs to honour it even though it
-sits in a ~%~ comment):
-
-#+BEGIN_SRC text
-% -*- mode: literate-latex; literate-lang: elisp; lexical-binding: t -*-
-#+END_SRC
-
-* Usage
-
-** Common Lisp (direct load)
+** Load it in Common Lisp (no tangle)
 
 #+BEGIN_SRC lisp
-(load "literate-latex.lisp")            ; or (asdf:load-system :literate-latex)
-(literate-latex:load-pamphlet "mylib.pamphlet")
+(load "/path/to/literate-latex/literate-latex.lisp")
+(literate-latex:load-pamphlet "hello.pamphlet")
+(hello "world")            ; => "Hello, world!"
 #+END_SRC
 
-** Emacs Lisp (direct load)
+** ...or in Emacs Lisp
+
+Use Emacs Lisp in the chunk (=(format "Hello, %s!" name)=) and:
 
 #+BEGIN_SRC elisp
 (require 'literate-latex)
-(literate-latex-load "mylib.pamphlet")
+(literate-latex-load "hello.pamphlet")
+(hello "world")
 #+END_SRC
 
-** Optional reorder / tangle
+** Typeset it to PDF
+
+#+BEGIN_SRC sh
+TEXINPUTS="/path/to/literate-latex/tex:" pdflatex hello.pamphlet
+#+END_SRC
+
+(Or put =literate-latex.sty= where TeX can find it and just run
+=pdflatex hello.pamphlet=.)
+
+* Chunk syntax
+
+#+BEGIN_SRC text
+\begin{chunk}[load=no]{name}     % optional [opts], required {name}
+... code ...                     % loaded verbatim, in document order
+\end{chunk}
+#+END_SRC
+
+Options (all optional, comma-separated): ~load=no~ skips the chunk,
+~lang=elisp~ restricts it to one loader. Same-named chunks concatenate.
+
+* noweb references (optional reorder)
+
+Reference one chunk from another with ~\getchunk{name}~, then assemble
+with ~tangle~ --- this is also how you use a pamphlet for a language that
+can't load it directly.
+
+#+BEGIN_SRC text
+\begin{chunk}{*}
+(list
+  \getchunk{b}
+  \getchunk{a}
+  )
+\end{chunk}
+
+\begin{chunk}{a}
+'a
+\end{chunk}
+
+\begin{chunk}{b}
+'b
+\end{chunk}
+#+END_SRC
+
+Tangling the ~*~ root yields ~(list~ / ~  'b~ / ~  'a~ / ~  )~ --- the
+helpers are spliced in reference order, indentation kept.
 
 #+BEGIN_SRC lisp
-;; Common Lisp: expand the "*" root chunk, splicing \getchunk refs.
-(literate-latex:tangle "mylib.pamphlet" "mylib.lisp")
+(literate-latex:tangle "demo.pamphlet" "demo.lisp")   ; root defaults to "*"
+;; or in Emacs:  (literate-latex-tangle "demo.pamphlet" "demo.lisp")
 #+END_SRC
 
-#+BEGIN_SRC elisp
-;; Emacs Lisp, same thing:
-(literate-latex-tangle "mylib.pamphlet" "mylib.lisp")   ; root defaults to "*"
-#+END_SRC
-
-* noweb chunk semantics
-
-The tangle path implements named-chunk references in the noweb tradition.
-Both engines (Common Lisp and Emacs Lisp) behave identically and are
-E2E-tested for each rule below.
-
-| Rule | Behaviour |
-|------+-----------|
-| Reference | a line ~<indent>\getchunk{name}~ is replaced by the body of chunk ~name~ |
-| Root | expansion starts at the ~*~ chunk (override with the ~root~ argument) |
-| Concatenation | chunks sharing a name are joined, in definition order |
-| Nesting | references expand recursively to any depth |
-| Reuse | a chunk may be referenced any number of times |
-| Indentation | the reference's leading whitespace is prepended to every expanded line, and compounds across nesting levels |
-| Cycle | a reference cycle signals an error instead of looping |
-| Undefined | a reference to a missing chunk signals an error |
-
-A reference stands on its own line (Axiom-pamphlet style); inline
-mid-line references are not expanded.
+References stand on their own line; indentation is preserved and
+compounds through nesting. Reference cycles and undefined names error.
 
 * Editing in Emacs
 
-~literate-latex-mode~ (auto-enabled for =.pamphlet=) derives from
-~latex-mode~ and adds chunk-aware font-lock, imenu, outline folding, and:
+=.pamphlet= files open in ~literate-latex-mode~ (chunk font-lock, imenu,
+folding) on top of ~latex-mode~:
 
-| Key | Command |
-|-----+---------|
-| ~C-c C-j~ | jump to the chunk under a ~\getchunk~ |
-| ~C-c C-c~ | typeset to PDF (latexmk) |
-| ~C-c C-p~ | inline preview (see below) |
-| ~C-c C-l~ | load this pamphlet |
+| Key       | Action                            |
+|-----------+-----------------------------------|
+| ~C-c C-j~ | jump to the chunk under ~\getchunk~ |
+| ~C-c C-c~ | typeset to PDF (latexmk)          |
+| ~C-c C-p~ | inline preview (xenops/AUCTeX if installed) |
+| ~C-c C-l~ | load this pamphlet                |
 
-* Native preview
-
-Because a pamphlet *is* a LaTeX document, standard preview tooling
-applies. literate-latex composes existing packages rather than building
-its own engine:
-
-| Preview | Package |
-|---------+---------|
-| Whole-page PDF, SyncTeX jump | =pdf-tools= + latexmk (~C-c C-c~) |
-| Inline math fragments + images | =xenops= (org-style overlays for =latex-mode=), or AUCTeX =preview-latex= |
-| Host-language highlight inside chunks | =polymode= (opt-in) |
-
-~C-c C-p~ (~literate-latex-preview~) turns on =xenops= or AUCTeX if
-installed and otherwise tells you what to install.
+Inline math/image preview reuses =xenops= or AUCTeX =preview-latex= when
+installed; the PDF + SyncTeX path needs only =pdflatex= / =latexmk=.
 
 * Tests
 
 #+BEGIN_SRC sh
-make test            # CL (sbcl) + Emacs Lisp (ert) E2E
-make test-cl
-make test-el
+make test        # Common Lisp (sbcl) + Emacs Lisp (ert), real load + PDF
 #+END_SRC
 
-The suite is real end-to-end: SBCL and Emacs load actual pamphlets, the
-tangle path is byte-compared, and =pdflatex= typesets a pamphlet to PDF
-(that test self-skips if =pdflatex= is absent).
+* Notes
 
-* Layout
-
-| File | Role |
-|------+------|
-| =literate-latex.lisp= | Common Lisp loader + tangle (readtable mechanism) |
-| =literate-latex.asd=  | ASDF system |
-| =literate-latex.el=   | Emacs Lisp loader, ~literate-latex-mode~, tangle |
-| =tex/literate-latex.sty= | the ~chunk~ / ~\getchunk~ LaTeX environment |
-| =tests/=              | E2E tests + =.pamphlet= fixtures |
-
-* Limitations
-
-- Direct load needs a programmable reader: Common Lisp and Emacs Lisp
-  today. Other languages use ~tangle~.
-- In the Common Lisp reader ~\~ is a macro character, so a bare symbol
-  written with ~a\ b~ single-escape is unsupported --- use ~|a b|~.
-  ~#\\~ char literals and ~"a\\b"~ strings are unaffected.
-- Inline math/image preview needs =xenops= or AUCTeX installed; the
-  PDF path needs only =pdflatex= / =latexmk=.
+- Direct load is Common Lisp and Emacs Lisp only; other languages tangle.
+- For Emacs Lisp put =lexical-binding: t= in the first-line modeline.
+- In the CL reader ~\~ is a macro char, so single-escape symbols (=a\ b=)
+  aren't supported --- use =|a b|=. Strings and =#\\= are unaffected.
