@@ -7,15 +7,25 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    name: test (emacs ${{ matrix.emacs_version }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # 29.4 lacks internal--get-default-lexical-binding-function, so the
+        # lexical-binding test self-skips there; 30.1 has it and runs it.
+        emacs_version: ['29.4', '30.1']
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install sbcl, emacs and a minimal LaTeX
+      - uses: purcell/setup-emacs@master
+        with:
+          version: ${{ matrix.emacs_version }}
+
+      - name: Install sbcl and a minimal LaTeX
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            sbcl emacs-nox \
-            texlive-latex-base texlive-latex-recommended
+            sbcl texlive-latex-base texlive-latex-recommended
 
       - name: Versions
         run: |
