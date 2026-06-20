@@ -59,6 +59,8 @@
 
 (ert-deftest llt-lexical-binding-honoured ()
   "The pamphlet modeline's `lexical-binding: t' must take effect."
+  ;; The hook needs Emacs's lexical-binding default override (Emacs 30+).
+  (skip-unless (boundp 'internal--get-default-lexical-binding-function))
   (fmakunbound 'literate-latex-test-make-adder)
   (literate-latex-load (llt-fixture "el-demo.pamphlet"))
   (should (fboundp 'literate-latex-test-make-adder))

@@ -1,0 +1,27 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install sbcl, emacs and a minimal LaTeX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            sbcl emacs-nox \
+            texlive-latex-base texlive-latex-recommended
+
+      - name: Versions
+        run: |
+          sbcl --version
+          emacs --version | head -1
+          pdflatex --version | head -1
+
+      - name: Run tests
+        run: make test
