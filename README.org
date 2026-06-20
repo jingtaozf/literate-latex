@@ -8,7 +8,7 @@ document =pdflatex= typesets. In the spirit of [[https://github.com/jingtaozf/li
 
 Direct load works for *Common Lisp* and *Emacs Lisp* (their readers are
 programmable). Any language --- or out-of-order assembly --- can use the
-optional noweb ~\getchunk~ tangle path instead.
+optional [[https://www.cs.tufts.edu/~nr/noweb/][noweb]] ~\getchunk~ tangle path instead.
 
 * Quick start
 
@@ -111,14 +111,22 @@ folding) on top of ~latex-mode~:
 | ~C-c C-p~ | inline preview (xenops/AUCTeX if installed) |
 | ~C-c C-l~ | load this pamphlet                |
 
-Inline math/image preview reuses =xenops= or AUCTeX =preview-latex= when
-installed; the PDF + SyncTeX path needs only =pdflatex= / =latexmk=.
+Inline math/image preview reuses [[https://github.com/dandavison/xenops][xenops]] or [[https://www.gnu.org/software/auctex/][AUCTeX]]'s =preview-latex=
+when installed; the PDF + SyncTeX path needs only =pdflatex= / [[https://ctan.org/pkg/latexmk][latexmk]].
 
 * Tests
 
 #+BEGIN_SRC sh
 make test        # Common Lisp (sbcl) + Emacs Lisp (ert), real load + PDF
 #+END_SRC
+
+* Files
+
+- [[file:literate-latex.lisp][literate-latex.lisp]] --- Common Lisp loader + tangle
+- [[file:literate-latex.el][literate-latex.el]] --- Emacs Lisp loader, ~literate-latex-mode~, tangle
+- [[file:tex/literate-latex.sty][tex/literate-latex.sty]] --- the ~chunk~ / ~\getchunk~ LaTeX environment
+- [[file:tests/][tests/]] --- E2E tests and =.pamphlet= fixtures
+- [[file:Makefile][Makefile]] --- the =make test= driver
 
 * Notes
 
