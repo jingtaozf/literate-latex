@@ -1,0 +1,393 @@
+;;; literate-latex.el --- Load Emacs Lisp directly from LaTeX pamphlets  -*- lexical-binding: t; -*-
+
+;; Copyright (C) 2026 Jingtao Xu
+;; Author: Jingtao Xu <jingtaozf@gmail.com>
+;; Version: 0.1.0
+;; Keywords: lisp docs extensions tools tex
+;; URL: https://github.com/jingtaozf/literate-latex
+;; Package-Requires: ((emacs "27.1"))
+
+;; This program is free software; you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;;; Commentary:
+
+;; literate-latex loads Emacs Lisp from a LaTeX pamphlet (.pamphlet / .tex)
+;; *directly*, with no tangle step -- the same file is typeset to PDF and
+;; loaded as source.  Code lives in `\begin{chunk}{name} ... \end{chunk}'
+;; environments; everything else is LaTeX prose the loader skips.
+;;
+;; This is the Emacs Lisp tier of the literate-latex family (the Common Lisp
+;; tier lives in literate-latex.lisp).  It also provides `literate-latex-mode'
+;; for editing pamphlets and `literate-latex-tangle' for the optional reorder
+;; path (noweb-style `\getchunk{name}' expansion), which additionally serves
+;; languages whose reader cannot load a pamphlet directly.
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'subr-x)
+
+(defgroup literate-latex nil
+  "Load Emacs Lisp directly from LaTeX pamphlets."
+  :group 'lisp)
+
+(defcustom literate-latex-language "elisp"
+  "Language this loader claims.  A chunk with no `lang=' loads under any."
+  :type 'string)
+
+(defcustom literate-latex-language-aliases '("elisp" "emacs-lisp")
+  "Names a chunk `lang=' option may use to mean the Emacs Lisp loader."
+  :type '(repeat string))
+
+(defcustom literate-latex-load-test-chunks nil
+  "When non-nil, chunks marked `load=test' are loaded too."
+  :type 'boolean)
+
+(defvar literate-latex-debug-p nil)
+(defun literate-latex-debug (fmt &rest args)
+  "Emit a debug message (FMT, ARGS) when `literate-latex-debug-p'."
+  (when literate-latex-debug-p (apply #'message fmt args)))
+
+;;;; --- stream helpers (a stream is a buffer, marker, or function) ----------
+
+(defun literate-latex-peek (in)
+  "Return the next character of stream IN without consuming it."
+  (cond ((bufferp in)
+         (with-current-buffer in (unless (eobp) (char-after))))
+        ((markerp in)
+         (with-current-buffer (marker-buffer in)
+           (when (< (marker-position in) (point-max)) (char-after in))))
+        ((functionp in)
+         (let ((c (funcall in))) (when c (funcall in c)) c))))
+
+(defun literate-latex-next (in)
+  "Return and consume the next character of stream IN."
+  (cond ((bufferp in)
+         (with-current-buffer in
+           (unless (eobp) (prog1 (char-after) (forward-char 1)))))
+        ((markerp in)
+         (with-current-buffer (marker-buffer in)
+           (when (< (marker-position in) (point-max))
+             (prog1 (char-after in) (forward-char 1)))))
+        ((functionp in) (funcall in))))
+
+(defun literate-latex-read-while (in pred)
+  "Consume and return chars of IN while PRED holds."
+  (let (chars ch)
+    (while (and (setq ch (literate-latex-peek in)) (funcall pred ch))
+      (push (literate-latex-next in) chars))
+    (apply #'string (nreverse chars))))
+
+(defun literate-latex-read-line (in)
+  "Consume one line of IN (including the newline) and return it without it."
+  (prog1 (literate-latex-read-while in (lambda (ch) (not (eq ch ?\n))))
+    (literate-latex-next in)))
+
+(defun literate-latex-ignore-white-space (in)
+  "Consume whitespace at the front of IN."
+  (while (memq (literate-latex-peek in) '(?\n ?\s ?\t))
+    (literate-latex-next in)))
+
+;;;; --- chunk header parsing -----------------------------------------------
+
+(defun literate-latex--parse-opts (str)
+  "Parse `k=v,k=v' option STR into an alist of (SYMBOL . STRING)."
+  (let (alist)
+    (dolist (pair (split-string str "," t "[ \t]*"))
+      (when (string-match "\\`\\([^=]+\\)=\\(.*\\)\\'" pair)
+        (push (cons (intern (string-trim (match-string 1 pair)))
+                    (string-trim (match-string 2 pair)))
+              alist)))
+    (nreverse alist)))
+
+(defun literate-latex--parse-begin (line)
+  "If LINE is a chunk header return (NAME . OPTS-ALIST), else nil."
+  (when (string-match
+         "\\`[ \t]*\\\\begin{chunk}\\(?:\\[\\([^]]*\\)\\]\\)?{\\([^}]*\\)}"
+         line)
+    (cons (match-string 2 line)
+          (literate-latex--parse-opts (or (match-string 1 line) "")))))
+
+(defun literate-latex--end-line-p (line)
+  "Return non-nil if LINE is a chunk terminator."
+  (string-prefix-p "\\end{chunk}" (string-trim-left line)))
+
+(defun literate-latex--loadable-p (opts)
+  "Return non-nil if a chunk with option alist OPTS should load."
+  (let ((load (or (cdr (assq 'load opts)) "yes"))
+        (lang (cdr (assq 'lang opts))))
+    (and (cond ((string-equal load "no") nil)
+               ((string-equal load "test") literate-latex-load-test-chunks)
+               (t t))
+         (or (null lang)
+             (member-ignore-case lang literate-latex-language-aliases)))))
+
+(defun literate-latex--loadable-begin-p (line)
+  "Return non-nil if LINE opens a chunk this loader should read."
+  (let ((p (literate-latex--parse-begin line)))
+    (and p (literate-latex--loadable-p (cdr p)))))
+
+;;;; --- the reader ----------------------------------------------------------
+;;
+;; Same shape as literate-elisp's line state machine, with LaTeX boundaries.
+;; In prose mode every non-chunk line is dropped; a loadable `\begin{chunk}'
+;; switches to code mode.  In code mode the only top-level `\' the reader can
+;; meet starts `\end{chunk}', which switches back to prose mode.
+
+(defvar literate-latex--in-chunk-p nil)
+(defvar literate-latex-emacs-read (symbol-function 'read))
+
+(defun literate-latex-read-datum (in)
+  "Read one Lisp datum from IN, skipping LaTeX prose.  May return nil."
+  (literate-latex-ignore-white-space in)
+  (let ((ch (literate-latex-peek in)))
+    (cond
+     ((not ch) (signal 'end-of-file nil))
+     ((not literate-latex--in-chunk-p)
+      (let ((line (literate-latex-read-line in)))
+        (when (literate-latex--loadable-begin-p line)
+          (literate-latex-debug "enter chunk: %s" line)
+          (setq literate-latex--in-chunk-p t)))
+      nil)
+     ((eq ch ?\\)                       ; top-level backslash => \end{chunk}
+      (literate-latex-debug "leave chunk: %s" (literate-latex-read-line in))
+      (setq literate-latex--in-chunk-p nil)
+      nil)
+     (t (funcall literate-latex-emacs-read in)))))
+
+(defun literate-latex-read-internal (&optional in)
+  "Read one form from IN, mimicking `read'."
+  (cl-loop for form = (literate-latex-read-datum in)
+           if form do (cl-return form)
+           if literate-latex--in-chunk-p do (cl-return nil)
+           if (null (literate-latex-peek in)) do (cl-return nil)))
+
+(defun literate-latex-read (&optional in)
+  "`load-read-function' replacement: literate read for pamphlets only."
+  (if (and load-file-name
+           (string-match "\\.\\(pamphlet\\|tex\\|ltx\\)\\'" load-file-name))
+      (literate-latex-read-internal in)
+    (read in)))
+
+;;;###autoload
+(defun literate-latex-load (path &optional language)
+  "Load Emacs Lisp from the pamphlet at PATH directly, with no tangle step.
+Optional LANGUAGE overrides `literate-latex-language' for this load."
+  (let ((load-read-function (symbol-function 'literate-latex-read))
+        (literate-latex--in-chunk-p nil)
+        (literate-latex-language (or language literate-latex-language)))
+    (load (expand-file-name path) nil t t)))
+
+;;;###autoload
+(defun literate-latex-load-file (file)
+  "Interactively load pamphlet FILE."
+  (interactive (list (read-file-name "Load pamphlet: ")))
+  (literate-latex-load (expand-file-name file)))
+
+;;;; --- lexical-binding cookie in the pamphlet modeline ---------------------
+;;
+;; Emacs only reads a `lexical-binding' cookie from a `;'-comment first line,
+;; so a pamphlet's `% -*- ... lexical-binding: t -*-' modeline is invisible to
+;; it (and loading warns "Missing cookie", defaulting wrongly).  As literate-
+;; elisp does for .org, hook the lexical-binding default so pamphlets honour
+;; their own modeline.
+
+(defun literate-latex--pamphlet-p (path)
+  (and path (string-match "\\.\\(pamphlet\\|tex\\|ltx\\)\\'" path)))
+
+(defun literate-latex--declared-lexical (path)
+  "Return t/nil if PATH's first line declares `lexical-binding', else :none."
+  (with-temp-buffer
+    (insert-file-contents path nil 0 1024)
+    (goto-char (point-min))
+    (if (re-search-forward "lexical-binding[ \t]*:[ \t]*\\([^ \t;]+\\)"
+                           (line-end-position) t)
+        (not (member (downcase (match-string 1)) '("nil" "false" "no")))
+      :none)))
+
+(defvar literate-latex--saved-lexical-fn
+  (and (boundp 'internal--get-default-lexical-binding-function)
+       internal--get-default-lexical-binding-function)
+  "Prior lexical-binding default fn, chained for non-pamphlet files.")
+
+(defun literate-latex--fallback-lexical (from)
+  (if (functionp literate-latex--saved-lexical-fn)
+      (funcall literate-latex--saved-lexical-fn from)
+    (default-toplevel-value 'lexical-binding)))
+
+(defun literate-latex--get-default-lexical-binding (from)
+  "Honour a pamphlet's modeline `lexical-binding'; chain otherwise.
+FROM is a path string (from `load') or the `*load*' buffer (from `eval-buffer')."
+  (let ((path (cond ((stringp from) from)
+                    ((bufferp from) (or (buffer-file-name from)
+                                        (bound-and-true-p load-file-name)))
+                    (t (bound-and-true-p load-file-name)))))
+    (if (literate-latex--pamphlet-p path)
+        (let ((d (literate-latex--declared-lexical path)))
+          (if (eq d :none) (literate-latex--fallback-lexical from) d))
+      (literate-latex--fallback-lexical from))))
+
+(when (and (boundp 'internal--get-default-lexical-binding-function)
+           (not (eq internal--get-default-lexical-binding-function
+                    #'literate-latex--get-default-lexical-binding)))
+  (setq internal--get-default-lexical-binding-function
+        #'literate-latex--get-default-lexical-binding))
+
+;;;; --- optional reorder (tangle) -------------------------------------------
+
+(defun literate-latex--collect-chunks (file)
+  "Return a hash table NAME -> list of body lines for FILE (same names append)."
+  (let ((chunks (make-hash-table :test #'equal)))
+    (with-temp-buffer
+      (insert-file-contents file)
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let* ((line (buffer-substring-no-properties
+                      (line-beginning-position) (line-end-position)))
+               (hdr (literate-latex--parse-begin line)))
+          (forward-line 1)
+          (when hdr
+            (let ((name (car hdr)) body)
+              (while (and (not (eobp))
+                          (let ((l (buffer-substring-no-properties
+                                    (line-beginning-position)
+                                    (line-end-position))))
+                            (if (literate-latex--end-line-p l)
+                                nil
+                              (push l body) t)))
+                (forward-line 1))
+              (puthash name
+                       (append (gethash name chunks) (nreverse body))
+                       chunks))))))
+    chunks))
+
+(defun literate-latex--getchunk-ref (line)
+  "If LINE is `<indent>\\getchunk{NAME}' return (INDENT . NAME), else nil."
+  (when (string-match "\\`\\([ \t]*\\)\\\\getchunk{\\([^}]+\\)}[ \t]*\\'" line)
+    (cons (match-string 1 line) (match-string 2 line))))
+
+(defun literate-latex--emit-chunk (name chunks indent seen out)
+  "Write expansion of chunk NAME from CHUNKS into buffer OUT.
+INDENT is prepended to every line; SEEN guards against reference cycles."
+  (when (member name seen)
+    (error "literate-latex: chunk reference cycle through %S" name))
+  (let ((body (gethash name chunks)))
+    (unless body (error "literate-latex: undefined chunk %S" name))
+    (dolist (line body)
+      (let ((ref (literate-latex--getchunk-ref line)))
+        (if ref
+            (literate-latex--emit-chunk (cdr ref) chunks
+                                        (concat indent (car ref))
+                                        (cons name seen) out)
+          (with-current-buffer out (insert indent line "\n")))))))
+
+;;;###autoload
+(defun literate-latex-tangle (file out &optional root)
+  "Expand ROOT chunk (default \"*\") of pamphlet FILE into OUT.
+Splices `\\getchunk{...}' references recursively in declared order.  This is
+the optional reorder path and the way to use a pamphlet for a language whose
+reader cannot load it directly."
+  (interactive "fPamphlet: \nFOutput file: ")
+  (let ((chunks (literate-latex--collect-chunks file))
+        (buf (find-file-noselect out)))
+    (with-current-buffer buf
+      (erase-buffer)
+      (literate-latex--emit-chunk (or root "*") chunks "" nil buf)
+      (save-buffer))
+    out))
+
+;;;; --- editing: major mode -------------------------------------------------
+
+(defvar literate-latex-mode-font-lock-keywords
+  '(("^[ \t]*\\(\\\\begin{chunk}\\)\\(?:\\(\\[[^]]*\\]\\)\\)?{\\([^}]*\\)}"
+     (1 font-lock-keyword-face)
+     (2 font-lock-type-face nil t)
+     (3 font-lock-function-name-face))
+    ("^[ \t]*\\(\\\\end{chunk}\\)" (1 font-lock-keyword-face))
+    ("\\(\\\\getchunk\\){\\([^}]*\\)}"
+     (1 font-lock-keyword-face) (2 font-lock-constant-face)))
+  "Extra font-lock to make chunk boundaries stand out over `latex-mode'.")
+
+(defun literate-latex--imenu-index ()
+  "Build an imenu index of chunk names in the current buffer."
+  (let (index)
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward
+              "^[ \t]*\\\\begin{chunk}\\(?:\\[[^]]*\\]\\)?{\\([^}]*\\)}"
+              nil t)
+        (push (cons (match-string-no-properties 1) (match-beginning 0)) index)))
+    (nreverse index)))
+
+(defun literate-latex-goto-chunk (name)
+  "Jump to the definition of chunk NAME (default: the `\\getchunk' at point)."
+  (interactive
+   (list (or (and (looking-at ".*?\\\\getchunk{\\([^}]+\\)}")
+                  (match-string-no-properties 1))
+             (completing-read "Chunk: " (mapcar #'car (literate-latex--imenu-index))))))
+  (let ((pos (save-excursion
+               (goto-char (point-min))
+               (when (re-search-forward
+                      (format "^[ \t]*\\\\begin{chunk}\\(?:\\[[^]]*\\]\\)?{%s}"
+                              (regexp-quote name))
+                      nil t)
+                 (match-beginning 0)))))
+    (if pos (progn (push-mark) (goto-char pos))
+      (user-error "No chunk named %s" name))))
+
+(defun literate-latex-compile ()
+  "Typeset the current pamphlet to PDF with latexmk."
+  (interactive)
+  (let ((file (buffer-file-name)))
+    (unless file (user-error "Buffer is not visiting a file"))
+    (save-buffer)
+    (let ((default-directory (file-name-directory file))
+          (process-environment
+           (cons (concat "TEXINPUTS=" (file-name-directory file)
+                         (expand-file-name "tex"
+                                           (locate-dominating-file file "tex"))
+                         ":")
+                 process-environment)))
+      (compile (format "latexmk -pdf %s"
+                       (shell-quote-argument (file-name-nondirectory file)))))))
+
+(defun literate-latex-preview ()
+  "Turn on org-style inline preview if an engine is installed.
+Prefers `xenops-mode', then AUCTeX `preview-latex'; otherwise explains how to
+get inline preview and offers `literate-latex-compile' for a full-page PDF."
+  (interactive)
+  (cond
+   ((fboundp 'xenops-mode) (xenops-mode 1) (message "literate-latex: xenops on"))
+   ((fboundp 'preview-document)
+    (call-interactively 'preview-document))
+   (t (message
+       "No inline-preview engine found.  Install `xenops' or AUCTeX, or use \
+M-x literate-latex-compile for a PDF."))))
+
+(defvar literate-latex-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-j") #'literate-latex-goto-chunk)
+    (define-key map (kbd "C-c C-c") #'literate-latex-compile)
+    (define-key map (kbd "C-c C-p") #'literate-latex-preview)
+    (define-key map (kbd "C-c C-l") #'literate-latex-load-file)
+    map)
+  "Keymap for `literate-latex-mode'.")
+
+;;;###autoload
+(define-derived-mode literate-latex-mode latex-mode "Lit-LaTeX"
+  "Major mode for editing literate-latex pamphlets.
+Adds chunk-aware font-lock, imenu, navigation, outline folding and a compile
+command on top of `latex-mode'."
+  (font-lock-add-keywords nil literate-latex-mode-font-lock-keywords)
+  (setq-local imenu-create-index-function #'literate-latex--imenu-index)
+  (setq-local outline-regexp "[ \t]*\\\\begin{chunk}")
+  (outline-minor-mode 1))
+
+;;;###autoload
+(add-to-list 'auto-mode-alist '("\\.pamphlet\\'" . literate-latex-mode))
+
+(provide 'literate-latex)
+;;; literate-latex.el ends here

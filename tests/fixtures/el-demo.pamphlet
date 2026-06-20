@@ -1,0 +1,31 @@
+% -*- mode: literate-latex; literate-lang: elisp; lexical-binding: t -*-
+\documentclass{article}
+\usepackage{literate-latex}
+\begin{document}
+
+\section{Greeting}
+\begin{chunk}{greet}
+(defun literate-latex-test-greet (name)
+  (format "Hello, %s!" name))
+\end{chunk}
+
+\section{Arithmetic}
+\begin{chunk}{add}
+(defun literate-latex-test-add (a b)
+  (+ a b))
+\end{chunk}
+
+\section{A closure}
+This only works when the modeline's \texttt{lexical-binding: t} is honoured ---
+under dynamic binding the returned lambda cannot capture \texttt{n}.
+\begin{chunk}{adder}
+(defun literate-latex-test-make-adder (n)
+  (lambda (x) (+ x n)))
+\end{chunk}
+
+\section{Skipped}
+\begin{chunk}[load=no]{scratch}
+(this is deliberately not valid elisp and must never load)
+\end{chunk}
+
+\end{document}

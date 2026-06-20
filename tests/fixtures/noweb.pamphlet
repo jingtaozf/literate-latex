@@ -1,0 +1,34 @@
+% -*- mode: literate-latex -*-
+\documentclass{article}
+\usepackage{literate-latex}
+\begin{document}
+
+\section{Root}
+The root references \texttt{section-a} twice (reuse) and \texttt{common}
+directly, mixing them with literal lines.
+\begin{chunk}{*}
+header
+\getchunk{section-a}
+\getchunk{common}
+middle
+\getchunk{section-a}
+footer
+\end{chunk}
+
+\section{section-a nests common under an indent}
+\begin{chunk}{section-a}
+a-begin
+  \getchunk{common}
+a-end
+\end{chunk}
+
+\section{common, defined in two parts (concatenation)}
+\begin{chunk}{common}
+common-1
+\end{chunk}
+
+\begin{chunk}{common}
+common-2
+\end{chunk}
+
+\end{document}

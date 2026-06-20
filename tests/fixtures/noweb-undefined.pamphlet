@@ -1,0 +1,6 @@
+% -*- mode: literate-latex -*-
+% Tangle-only fixture: the root references a chunk that is never defined, so
+% `tangle' must signal an error instead of emitting nothing.
+\begin{chunk}{*}
+\getchunk{does-not-exist}
+\end{chunk}

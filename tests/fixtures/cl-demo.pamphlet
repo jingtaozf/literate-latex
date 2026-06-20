@@ -1,0 +1,40 @@
+% -*- mode: literate-latex; literate-lang: lisp -*-
+\documentclass{article}
+\usepackage{literate-latex}
+\title{literate-latex Common Lisp demo}
+\author{literate-latex}
+\begin{document}
+\maketitle
+
+\section{Greeting}
+The greeting lives in its own package so the test can probe it without
+polluting \texttt{CL-USER}.
+\begin{chunk}{greet}
+(defpackage #:literate-latex-test (:use #:cl) (:export #:greet #:add))
+(in-package #:literate-latex-test)
+(defun greet (name)
+  (format nil "Hello, ~a!" name))
+\end{chunk}
+
+\section{Arithmetic}
+A second chunk in the same package; \texttt{in-package} carries across chunks
+because the loader reads then evaluates each form in document order.
+\begin{chunk}{add}
+(in-package #:literate-latex-test)
+(defun add (a b) (+ a b))
+\end{chunk}
+
+\section{Things the loader must skip}
+This chunk is disabled with \texttt{load=no}; its body is not even valid Lisp
+and must never reach the reader.
+\begin{chunk}[load=no]{scratch}
+(this is deliberately %%% not valid lisp \ and must never load)
+\end{chunk}
+
+This chunk is for another language; the Common Lisp loader skips it on
+\texttt{lang}.
+\begin{chunk}[lang=python]{py}
+print("not loaded by the CL reader")
+\end{chunk}
+
+\end{document}

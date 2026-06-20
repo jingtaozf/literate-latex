@@ -1,0 +1,14 @@
+% -*- mode: literate-latex -*-
+% Tangle-only fixture: the chunk graph * -> a -> b -> a is cyclic and must
+% make `tangle' signal an error rather than recurse forever.
+\begin{chunk}{*}
+\getchunk{a}
+\end{chunk}
+
+\begin{chunk}{a}
+\getchunk{b}
+\end{chunk}
+
+\begin{chunk}{b}
+\getchunk{a}
+\end{chunk}

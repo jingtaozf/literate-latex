@@ -1,0 +1,50 @@
+%% literate-latex.sty --- chunk environment for literate-latex pamphlets
+%%
+%% A literate-latex pamphlet is an ordinary LaTeX document.  Code lives in
+%% `chunk' environments; the surrounding LaTeX is prose.  The same file is
+%% (a) typeset to PDF by pdflatex/latexmk, and (b) loaded *directly* by the
+%% language runtime (Common Lisp / Emacs Lisp) with NO tangle step.
+%%
+%% This style file only governs typesetting.  The loader (literate-latex.lisp
+%% / literate-latex.el) reads the raw bytes between \begin{chunk} and
+%% \end{chunk}; it never sees the verbatim formatting applied here.
+%%
+%% Usage in a pamphlet preamble:
+%%   \usepackage{literate-latex}
+%% then
+%%   \begin{chunk}{a chunk name}
+%%   (defun foo () ...)
+%%   \end{chunk}
+%% optional load/lang control (ignored by LaTeX, read by the loader):
+%%   \begin{chunk}[load=no]{scratch}
+%%   \begin{chunk}[lang=elisp]{handler}
+%% and noweb-style references (expanded only by the optional tangle path):
+%%   \getchunk{a chunk name}
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{literate-latex}[2026/06/20 v0.1 literate-latex chunks]
+
+%% The `verbatim' package makes \verbatim/\endverbatim honour \@currenvir, so a
+%% custom-named verbatim environment ends at \end{chunk} rather than the base
+%% LaTeX hardcoded \end{verbatim} (which would run away to end of file).
+\RequirePackage{verbatim}
+
+%% chunk: optional [opts], mandatory {name}.  The opts argument is purely a
+%% loader directive and carries no typesetting meaning, so #1 is unused below.
+%% The body is set verbatim so code is shown exactly as written.
+\newenvironment{chunk}[2][]{%
+  \par\medskip\noindent\hbox to 2cm{}{\bfseries --- #2 ---}\par\nobreak\smallskip
+  \verbatim}%
+ {\endverbatim\par\noindent\hbox to 2cm{}{\bfseries ----------}\par\medskip}
+
+%% A reference to another chunk.  In direct-load mode this never appears
+%% inside code; it is a visual marker that the tangle path expands.
+\providecommand{\getchunk}[1]{%
+  \par\noindent\hbox to 2cm{}$\langle$\textit{#1}$\rangle$\par}
+
+%% Optional cross-reference helpers, kept for axiom-pamphlet familiarity.
+\providecommand{\calls}[2]{}
+\providecommand{\uses}[2]{}
+\providecommand{\refsto}[2]{}
+
+\endinput

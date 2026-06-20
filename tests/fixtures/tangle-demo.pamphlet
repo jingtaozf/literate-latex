@@ -1,0 +1,26 @@
+% -*- mode: literate-latex -*-
+\documentclass{article}
+\usepackage{literate-latex}
+\begin{document}
+
+\section{Root}
+The root chunk references its helpers in an order opposite to their
+definition, and indents the references --- the tangle path must reorder the
+helpers and preserve the indentation noweb-style.
+\begin{chunk}{*}
+(list
+  \getchunk{helper-b}
+  \getchunk{helper-a}
+  )
+\end{chunk}
+
+\section{Helpers (defined after the root that uses them)}
+\begin{chunk}{helper-a}
+'a
+\end{chunk}
+
+\begin{chunk}{helper-b}
+'b
+\end{chunk}
+
+\end{document}
