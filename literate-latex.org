@@ -18,13 +18,13 @@ whose reader cannot load a pamphlet directly.
 This file is *itself* a literate document: it is loaded via
 =literate-elisp-load= (no =.el= is tangled or committed), so the prose you are
 reading is the package's source. Author: Jingtao Xu; GPLv3-or-later; requires
-Emacs 27.1.
+Emacs 30.1 (it loads via literate-elisp, whose floor is 30.1).
 
 The package opens with cl-lib + subr-x and a customization group: which
 language this loader claims (a chunk with no =lang== loads under any), the
 aliases that name the Emacs Lisp loader, and whether =load=test= chunks load.
 
-#+BEGIN_SRC elisp :load yes
+#+BEGIN_SRC elisp
 (require 'cl-lib)
 (require 'subr-x)
 
@@ -57,7 +57,7 @@ or a function (the generic pull fallback). These four helpers — peek, next,
 read-while, read-line, ignore-white-space — are the only places that touch the
 stream representation, so the reader below stays representation-agnostic.
 
-#+BEGIN_SRC elisp :load yes
+#+BEGIN_SRC elisp
 (defun literate-latex-peek (in)
   "Return the next character of stream IN without consuming it."
   (cond ((bufferp in)
@@ -106,7 +106,7 @@ language tier: =load=no= never loads, =load=test= loads only when
 =literate-latex-load-test-chunks=, and a =lang== restricts the chunk to the
 matching loader.
 
-#+BEGIN_SRC elisp :load yes
+#+BEGIN_SRC elisp
 (defun literate-latex--parse-opts (str)
   "Parse `k=v,k=v' option STR into an alist of (SYMBOL . STRING)."
   (let (alist)
@@ -154,7 +154,7 @@ meet starts =\end{chunk}=, which switches back to prose mode. =literate-latex-re
 installs as =load-read-function= but defers to the stock =read= for any file
 that is not a pamphlet, so it is safe to leave bound.
 
-#+BEGIN_SRC elisp :load yes
+#+BEGIN_SRC elisp
 (defvar literate-latex--in-chunk-p nil)
 (defvar literate-latex-emacs-read (symbol-function 'read))
 
@@ -197,7 +197,7 @@ that is not a pamphlet, so it is safe to leave bound.
 work, so byte-compilation, =load-history=, and error reporting all behave
 normally. =literate-latex-load-file= is the interactive entry point.
 
-#+BEGIN_SRC elisp :load yes
+#+BEGIN_SRC elisp
 (defun literate-latex-load (path &optional language)
   "Load Emacs Lisp from the pamphlet at PATH directly, with no tangle step.
 Optional LANGUAGE overrides `literate-latex-language' for this load."
@@ -222,7 +222,7 @@ modeline; non-pamphlet files chain to the previously-installed function. This
 hook (=internal--get-default-lexical-binding-function=) only exists on Emacs 31+,
 hence the =boundp= guard.
 
-#+BEGIN_SRC elisp :load yes
+#+BEGIN_SRC elisp
 (defun literate-latex--pamphlet-p (path)
   (and path (string-match "\\.\\(pamphlet\\|tex\\|ltx\\)\\'" path)))
 
@@ -274,7 +274,7 @@ names concatenate), and =--emit-chunk= splices =\getchunk{name}= references
 recursively in declared order, preserving and compounding indentation. Reference
 cycles and undefined names error rather than loop.
 
-#+BEGIN_SRC elisp :load yes
+#+BEGIN_SRC elisp
 (defun literate-latex--collect-chunks (file)
   "Return a hash table NAME -> list of body lines for FILE (same names append)."
   (let ((chunks (make-hash-table :test #'equal)))
@@ -341,7 +341,7 @@ reader cannot load it directly."
 =literate-latex-mode= layers chunk-awareness on top of =latex-mode=. First,
 font-lock so chunk and =\getchunk= boundaries stand out.
 
-#+BEGIN_SRC elisp :load yes
+#+BEGIN_SRC elisp
 (defvar literate-latex-mode-font-lock-keywords
   '(("^[ \t]*\\(\\\\begin{chunk}\\)\\(?:\\(\\[[^]]*\\]\\)\\)?{\\([^}]*\\)}"
      (1 font-lock-keyword-face)
@@ -364,7 +364,7 @@ structure. The imenu index lists sections indented by depth *followed by* chunk
 names at top level --- chunks stay top-level so =imenu= / =helm-imenu= can jump
 to a chunk by its bare name (the contract the test suite pins).
 
-#+BEGIN_SRC elisp :load yes
+#+BEGIN_SRC elisp
 (defconst literate-latex--section-keywords
   '("part" "chapter" "section" "subsection" "subsubsection" "paragraph")
   "LaTeX sectioning commands, outermost first, for outline + imenu.")
@@ -417,7 +417,7 @@ point (or one chosen by completion). =compile= typesets the current pamphlet
 with latexmk, pointing =TEXINPUTS= at the bundled =literate-latex.sty=.
 =preview= turns on inline math preview via whatever engine is installed.
 
-#+BEGIN_SRC elisp :load yes
+#+BEGIN_SRC elisp
 (defun literate-latex-goto-chunk (name)
   "Jump to the definition of chunk NAME (default: the `\\getchunk' at point)."
   (interactive
@@ -472,7 +472,7 @@ org-mode's do. The derived mode wires font-lock, the section+chunk imenu, the
 combined outline-regexp, and =outline-minor-mode=. Finally =.pamphlet= files
 open in this mode, and the package provides its feature.
 
-#+BEGIN_SRC elisp :load yes
+#+BEGIN_SRC elisp
 (defvar literate-latex-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-j") #'literate-latex-goto-chunk)
