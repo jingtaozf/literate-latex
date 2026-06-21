@@ -311,23 +311,56 @@ reader cannot load it directly."
      (1 font-lock-keyword-face) (2 font-lock-constant-face)))
   "Extra font-lock to make chunk boundaries stand out over `latex-mode'.")
 
-(defun literate-latex--imenu-index ()
-  "Build an imenu index of chunk names in the current buffer."
-  (let (index)
+(defconst literate-latex--section-keywords
+  '("part" "chapter" "section" "subsection" "subsubsection" "paragraph")
+  "LaTeX sectioning commands, outermost first, for outline + imenu.")
+
+(defun literate-latex--section-depth (kw)
+  "Outline depth of section keyword KW (part=1 .. paragraph=6)."
+  (1+ (or (cl-position kw literate-latex--section-keywords :test #'equal) 6)))
+
+(defun literate-latex-outline-level ()
+  "Outline level of the heading on the current line: sections 1-6, chunk 7."
+  (save-excursion
+    (if (looking-at "[ \t]*\\\\\\([a-z]+\\)\\*?{")
+        (let ((d (cl-position (match-string 1) literate-latex--section-keywords
+                              :test #'equal)))
+          (if d (1+ d) 7))
+      7)))
+
+(defun literate-latex--chunk-alist ()
+  "Alist of (CHUNK-NAME . POS) for every \\begin{chunk} in the buffer."
+  (let (chunks)
     (save-excursion
       (goto-char (point-min))
       (while (re-search-forward
-              "^[ \t]*\\\\begin{chunk}\\(?:\\[[^]]*\\]\\)?{\\([^}]*\\)}"
+              "^[ \t]*\\\\begin{chunk}\\(?:\\[[^]]*\\]\\)?{\\([^}]*\\)}" nil t)
+        (push (cons (match-string-no-properties 1) (match-beginning 0)) chunks)))
+    (nreverse chunks)))
+
+(defun literate-latex--imenu-index ()
+  "Imenu index: LaTeX sections (indented by depth) plus a \"Chunks\" group."
+  (let (sections)
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward
+              "^[ \t]*\\\\\\(part\\|chapter\\|section\\|subsection\\|subsubsection\\|paragraph\\)\\*?{\\([^}]*\\)}"
               nil t)
-        (push (cons (match-string-no-properties 1) (match-beginning 0)) index)))
-    (nreverse index)))
+        (push (cons (concat (make-string
+                             (* 2 (1- (literate-latex--section-depth (match-string 1)))) ?\s)
+                            (match-string-no-properties 2))
+                    (match-beginning 0))
+              sections)))
+    (let ((chunks (literate-latex--chunk-alist)))
+      (append (nreverse sections)
+              (when chunks (list (cons "Chunks" chunks)))))))
 
 (defun literate-latex-goto-chunk (name)
   "Jump to the definition of chunk NAME (default: the `\\getchunk' at point)."
   (interactive
    (list (or (and (looking-at ".*?\\\\getchunk{\\([^}]+\\)}")
                   (match-string-no-properties 1))
-             (completing-read "Chunk: " (mapcar #'car (literate-latex--imenu-index))))))
+             (completing-read "Chunk: " (mapcar #'car (literate-latex--chunk-alist))))))
   (let ((pos (save-excursion
                (goto-char (point-min))
                (when (re-search-forward
@@ -371,8 +404,9 @@ M-x literate-latex-compile for a PDF."))))
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-j") #'literate-latex-goto-chunk)
     (define-key map (kbd "C-c C-c") #'literate-latex-compile)
-    (define-key map (kbd "C-c C-p") #'literate-latex-preview)
     (define-key map (kbd "C-c C-l") #'literate-latex-load-file)
+    (define-key map (kbd "C-c C-n") #'outline-next-heading)
+    (define-key map (kbd "C-c C-p") #'outline-previous-heading)
     map)
   "Keymap for `literate-latex-mode'.")
 
@@ -383,7 +417,11 @@ Adds chunk-aware font-lock, imenu, navigation, outline folding and a compile
 command on top of `latex-mode'."
   (font-lock-add-keywords nil literate-latex-mode-font-lock-keywords)
   (setq-local imenu-create-index-function #'literate-latex--imenu-index)
-  (setq-local outline-regexp "[ \t]*\\\\begin{chunk}")
+  (setq-local outline-regexp
+              (concat "[ \t]*\\\\\\(part\\|chapter\\|section\\|subsection"
+                      "\\|subsubsection\\|paragraph\\)\\*?{"
+                      "\\|[ \t]*\\\\begin{chunk}"))
+  (setq-local outline-level #'literate-latex-outline-level)
   (outline-minor-mode 1))
 
 ;;;###autoload
