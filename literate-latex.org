@@ -1,32 +1,30 @@
-;;; literate-latex.el --- Load Emacs Lisp directly from LaTeX pamphlets  -*- lexical-binding: t; -*-
+# -*- mode: org; -*-
+#+TITLE: literate-latex --- load Emacs Lisp directly from LaTeX pamphlets
+#+PROPERTY: header-args:elisp :results silent
 
-;; Copyright (C) 2026 Jingtao Xu
-;; Author: Jingtao Xu <jingtaozf@gmail.com>
-;; Version: 0.1.0
-;; Keywords: lisp docs extensions tools tex
-;; URL: https://github.com/jingtaozf/literate-latex
-;; Package-Requires: ((emacs "27.1"))
+* Overview
 
-;; This program is free software; you can redistribute it and/or modify
-;; it under the terms of the GNU General Public License as published by
-;; the Free Software Foundation, either version 3 of the License, or
-;; (at your option) any later version.
+=literate-latex= loads Emacs Lisp from a LaTeX pamphlet (=.pamphlet= / =.tex=)
+*directly*, with no tangle step --- the same file is typeset to PDF and loaded
+as source. Code lives in =\begin{chunk}{name} ... \end{chunk}= environments;
+everything else is LaTeX prose the loader skips.
 
-;;; Commentary:
+This is the Emacs Lisp tier of the literate-latex family (the Common Lisp tier
+lives in =literate-latex.lisp=). It also provides =literate-latex-mode= for
+editing pamphlets and =literate-latex-tangle= for the optional reorder path
+(noweb-style =\getchunk{name}= expansion), which additionally serves languages
+whose reader cannot load a pamphlet directly.
 
-;; literate-latex loads Emacs Lisp from a LaTeX pamphlet (.pamphlet / .tex)
-;; *directly*, with no tangle step -- the same file is typeset to PDF and
-;; loaded as source.  Code lives in `\begin{chunk}{name} ... \end{chunk}'
-;; environments; everything else is LaTeX prose the loader skips.
-;;
-;; This is the Emacs Lisp tier of the literate-latex family (the Common Lisp
-;; tier lives in literate-latex.lisp).  It also provides `literate-latex-mode'
-;; for editing pamphlets and `literate-latex-tangle' for the optional reorder
-;; path (noweb-style `\getchunk{name}' expansion), which additionally serves
-;; languages whose reader cannot load a pamphlet directly.
+This file is *itself* a literate document: it is loaded via
+=literate-elisp-load= (no =.el= is tangled or committed), so the prose you are
+reading is the package's source. Author: Jingtao Xu; GPLv3-or-later; requires
+Emacs 27.1.
 
-;;; Code:
+The package opens with cl-lib + subr-x and a customization group: which
+language this loader claims (a chunk with no =lang== loads under any), the
+aliases that name the Emacs Lisp loader, and whether =load=test= chunks load.
 
+#+BEGIN_SRC elisp
 (require 'cl-lib)
 (require 'subr-x)
 
@@ -50,9 +48,16 @@
 (defun literate-latex-debug (fmt &rest args)
   "Emit a debug message (FMT, ARGS) when `literate-latex-debug-p'."
   (when literate-latex-debug-p (apply #'message fmt args)))
+#+END_SRC
 
-;;;; --- stream helpers (a stream is a buffer, marker, or function) ----------
+* Stream helpers
 
+The reader consumes characters from a *stream*, which is a buffer, a marker,
+or a function (the generic pull fallback). These four helpers — peek, next,
+read-while, read-line, ignore-white-space — are the only places that touch the
+stream representation, so the reader below stays representation-agnostic.
+
+#+BEGIN_SRC elisp
 (defun literate-latex-peek (in)
   "Return the next character of stream IN without consuming it."
   (cond ((bufferp in)
@@ -90,9 +95,18 @@
   "Consume whitespace at the front of IN."
   (while (memq (literate-latex-peek in) '(?\n ?\s ?\t))
     (literate-latex-next in)))
+#+END_SRC
 
-;;;; --- chunk header parsing -----------------------------------------------
+* Chunk header parsing
 
+A chunk header is =\begin{chunk}[opts]{name}=. =--parse-begin= returns
+=(NAME . OPTS-ALIST)= or nil; =--parse-opts= splits the optional =k=v,k=v=
+list. =--loadable-p= decides whether a given chunk should load under this
+language tier: =load=no= never loads, =load=test= loads only when
+=literate-latex-load-test-chunks=, and a =lang== restricts the chunk to the
+matching loader.
+
+#+BEGIN_SRC elisp
 (defun literate-latex--parse-opts (str)
   "Parse `k=v,k=v' option STR into an alist of (SYMBOL . STRING)."
   (let (alist)
@@ -129,14 +143,18 @@
   "Return non-nil if LINE opens a chunk this loader should read."
   (let ((p (literate-latex--parse-begin line)))
     (and p (literate-latex--loadable-p (cdr p)))))
+#+END_SRC
 
-;;;; --- the reader ----------------------------------------------------------
-;;
-;; Same shape as literate-elisp's line state machine, with LaTeX boundaries.
-;; In prose mode every non-chunk line is dropped; a loadable `\begin{chunk}'
-;; switches to code mode.  In code mode the only top-level `\' the reader can
-;; meet starts `\end{chunk}', which switches back to prose mode.
+* The reader --- a line state machine
 
+Same shape as literate-elisp's line state machine, with LaTeX boundaries. In
+*prose mode* every non-chunk line is dropped; a loadable =\begin{chunk}=
+switches to *code mode*. In code mode the only top-level =\= the reader can
+meet starts =\end{chunk}=, which switches back to prose mode. =literate-latex-read=
+installs as =load-read-function= but defers to the stock =read= for any file
+that is not a pamphlet, so it is safe to leave bound.
+
+#+BEGIN_SRC elisp
 (defvar literate-latex--in-chunk-p nil)
 (defvar literate-latex-emacs-read (symbol-function 'read))
 
@@ -171,8 +189,15 @@
            (string-match "\\.\\(pamphlet\\|tex\\|ltx\\)\\'" load-file-name))
       (literate-latex-read-internal in)
     (read in)))
+#+END_SRC
 
-;;;###autoload
+* Loading a pamphlet
+
+=literate-latex-load= binds the literate reader and lets stock =load= do the
+work, so byte-compilation, =load-history=, and error reporting all behave
+normally. =literate-latex-load-file= is the interactive entry point.
+
+#+BEGIN_SRC elisp
 (defun literate-latex-load (path &optional language)
   "Load Emacs Lisp from the pamphlet at PATH directly, with no tangle step.
 Optional LANGUAGE overrides `literate-latex-language' for this load."
@@ -181,20 +206,23 @@ Optional LANGUAGE overrides `literate-latex-language' for this load."
         (literate-latex-language (or language literate-latex-language)))
     (load (expand-file-name path) nil t t)))
 
-;;;###autoload
 (defun literate-latex-load-file (file)
   "Interactively load pamphlet FILE."
   (interactive (list (read-file-name "Load pamphlet: ")))
   (literate-latex-load (expand-file-name file)))
+#+END_SRC
 
-;;;; --- lexical-binding cookie in the pamphlet modeline ---------------------
-;;
-;; Emacs only reads a `lexical-binding' cookie from a `;'-comment first line,
-;; so a pamphlet's `% -*- ... lexical-binding: t -*-' modeline is invisible to
-;; it (and loading warns "Missing cookie", defaulting wrongly).  As literate-
-;; elisp does for .org, hook the lexical-binding default so pamphlets honour
-;; their own modeline.
+* Honouring the pamphlet's lexical-binding modeline
 
+Emacs only reads a =lexical-binding= cookie from a =;=-comment first line, so a
+pamphlet's =% -*- ... lexical-binding: t -*-= modeline is invisible to it (and
+loading warns "Missing cookie", defaulting wrongly). As literate-elisp does for
+=.org=, we hook the lexical-binding default so pamphlets honour their own
+modeline; non-pamphlet files chain to the previously-installed function. This
+hook (=internal--get-default-lexical-binding-function=) only exists on Emacs 31+,
+hence the =boundp= guard.
+
+#+BEGIN_SRC elisp
 (defun literate-latex--pamphlet-p (path)
   (and path (string-match "\\.\\(pamphlet\\|tex\\|ltx\\)\\'" path)))
 
@@ -235,9 +263,18 @@ FROM is a path string (from `load') or the `*load*' buffer (from `eval-buffer').
                     #'literate-latex--get-default-lexical-binding)))
   (setq internal--get-default-lexical-binding-function
         #'literate-latex--get-default-lexical-binding))
+#+END_SRC
 
-;;;; --- optional reorder (tangle) -------------------------------------------
+* Optional reorder (noweb tangle)
 
+Direct load only works for languages whose reader is programmable (Common Lisp,
+Emacs Lisp). For any other language --- or for out-of-order assembly --- a
+pamphlet can be *tangled*: =--collect-chunks= gathers each chunk body (same
+names concatenate), and =--emit-chunk= splices =\getchunk{name}= references
+recursively in declared order, preserving and compounding indentation. Reference
+cycles and undefined names error rather than loop.
+
+#+BEGIN_SRC elisp
 (defun literate-latex--collect-chunks (file)
   "Return a hash table NAME -> list of body lines for FILE (same names append)."
   (let ((chunks (make-hash-table :test #'equal)))
@@ -284,7 +321,6 @@ INDENT is prepended to every line; SEEN guards against reference cycles."
                                         (cons name seen) out)
           (with-current-buffer out (insert indent line "\n")))))))
 
-;;;###autoload
 (defun literate-latex-tangle (file out &optional root)
   "Expand ROOT chunk (default \"*\") of pamphlet FILE into OUT.
 Splices `\\getchunk{...}' references recursively in declared order.  This is
@@ -298,9 +334,14 @@ reader cannot load it directly."
       (literate-latex--emit-chunk (or root "*") chunks "" nil buf)
       (save-buffer))
     out))
+#+END_SRC
 
-;;;; --- editing: major mode -------------------------------------------------
+* Editing: the major mode
 
+=literate-latex-mode= layers chunk-awareness on top of =latex-mode=. First,
+font-lock so chunk and =\getchunk= boundaries stand out.
+
+#+BEGIN_SRC elisp
 (defvar literate-latex-mode-font-lock-keywords
   '(("^[ \t]*\\(\\\\begin{chunk}\\)\\(?:\\(\\[[^]]*\\]\\)\\)?{\\([^}]*\\)}"
      (1 font-lock-keyword-face)
@@ -310,7 +351,20 @@ reader cannot load it directly."
     ("\\(\\\\getchunk\\){\\([^}]*\\)}"
      (1 font-lock-keyword-face) (2 font-lock-constant-face)))
   "Extra font-lock to make chunk boundaries stand out over `latex-mode'.")
+#+END_SRC
 
+** Section + chunk outline and imenu
+
+A pamphlet is a *document*, so navigation should cover its LaTeX sections, not
+just its code chunks. =--section-keywords= ranks the sectioning commands;
+=outline-level= maps a heading on the current line to its depth (part=1 ..
+paragraph=6, a chunk=7), and the mode's =outline-regexp= (set below) matches
+both sections and chunks so =outline-minor-mode= folds and navigates the whole
+structure. The imenu index lists sections indented by depth *followed by* chunk
+names at top level --- chunks stay top-level so =imenu= / =helm-imenu= can jump
+to a chunk by its bare name (the contract the test suite pins).
+
+#+BEGIN_SRC elisp
 (defconst literate-latex--section-keywords
   '("part" "chapter" "section" "subsection" "subsubsection" "paragraph")
   "LaTeX sectioning commands, outermost first, for outline + imenu.")
@@ -354,7 +408,16 @@ chunk by its bare name, the same as before sections were added."
                     (match-beginning 0))
               sections)))
     (append (nreverse sections) (literate-latex--chunk-alist))))
+#+END_SRC
 
+** Chunk navigation, compile, and preview
+
+=goto-chunk= jumps to the definition of the chunk under the =\getchunk= at
+point (or one chosen by completion). =compile= typesets the current pamphlet
+with latexmk, pointing =TEXINPUTS= at the bundled =literate-latex.sty=.
+=preview= turns on inline math preview via whatever engine is installed.
+
+#+BEGIN_SRC elisp
 (defun literate-latex-goto-chunk (name)
   "Jump to the definition of chunk NAME (default: the `\\getchunk' at point)."
   (interactive
@@ -399,7 +462,17 @@ get inline preview and offers `literate-latex-compile' for a full-page PDF."
    (t (message
        "No inline-preview engine found.  Install `xenops' or AUCTeX, or use \
 M-x literate-latex-compile for a PDF."))))
+#+END_SRC
 
+** Keymap and mode definition
+
+=C-c C-j= jumps to a chunk, =C-c C-c= compiles, =C-c C-l= loads, and =C-c C-n=
+/ =C-c C-p= move to the next/previous heading (section or chunk) the way
+org-mode's do. The derived mode wires font-lock, the section+chunk imenu, the
+combined outline-regexp, and =outline-minor-mode=. Finally =.pamphlet= files
+open in this mode, and the package provides its feature.
+
+#+BEGIN_SRC elisp
 (defvar literate-latex-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-j") #'literate-latex-goto-chunk)
@@ -410,7 +483,6 @@ M-x literate-latex-compile for a PDF."))))
     map)
   "Keymap for `literate-latex-mode'.")
 
-;;;###autoload
 (define-derived-mode literate-latex-mode latex-mode "Lit-LaTeX"
   "Major mode for editing literate-latex pamphlets.
 Adds chunk-aware font-lock, imenu, navigation, outline folding and a compile
@@ -424,8 +496,7 @@ command on top of `latex-mode'."
   (setq-local outline-level #'literate-latex-outline-level)
   (outline-minor-mode 1))
 
-;;;###autoload
 (add-to-list 'auto-mode-alist '("\\.pamphlet\\'" . literate-latex-mode))
 
 (provide 'literate-latex)
-;;; literate-latex.el ends here
+#+END_SRC

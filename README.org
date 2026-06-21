@@ -37,10 +37,12 @@ A greeting.
 
 ** ...or in Emacs Lisp
 
-Use Emacs Lisp in the chunk (=(format "Hello, %s!" name)=) and:
+Use Emacs Lisp in the chunk (=(format "Hello, %s!" name)=) and load the
+package itself with [[https://github.com/jingtaozf/literate-elisp][literate-elisp]] (it is an =.org=, there is no =.el=):
 
 #+BEGIN_SRC elisp
-(require 'literate-latex)
+(require 'literate-elisp)
+(literate-elisp-load "/path/to/literate-latex/literate-latex.org")
 (literate-latex-load "hello.pamphlet")
 (hello "world")
 #+END_SRC
@@ -123,9 +125,9 @@ make test        # Common Lisp (sbcl) + Emacs Lisp (ert), real load + PDF
 * Files
 
 - [[file:literate-latex.lisp][literate-latex.lisp]] --- Common Lisp loader + tangle
-- [[file:literate-latex.el][literate-latex.el]] --- Emacs Lisp loader, ~literate-latex-mode~, tangle
+- [[file:literate-latex.org][literate-latex.org]] --- Emacs Lisp loader, ~literate-latex-mode~, tangle (a literate =.org=, loaded via ~literate-elisp-load~; no =.el=)
 - [[file:tex/literate-latex.sty][tex/literate-latex.sty]] --- the ~chunk~ / ~\getchunk~ LaTeX environment
-- [[file:tests/][tests/]] --- E2E tests and =.pamphlet= fixtures
+- [[file:tests/][tests/]] --- E2E tests (=test-elisp.org=, =test-cl.lisp=) and =.pamphlet= fixtures
 - [[file:Makefile][Makefile]] --- the =make test= driver
 
 * Notes

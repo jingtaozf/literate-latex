@@ -16,3 +16,4 @@
 
 # test scratch
 /tests/build/
+.deps/

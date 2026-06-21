@@ -1,8 +1,21 @@
-;;; test-elisp.el --- E2E for the Emacs Lisp direct-load + tangle paths  -*- lexical-binding: t; -*-
-;;
-;; Run from the repo root:
-;;   emacs -batch -Q -L . -l tests/test-elisp.el -f ert-run-tests-batch-and-exit
+# -*- mode: org; -*-
+#+TITLE: test-elisp --- E2E for the Emacs Lisp direct-load + tangle paths
+#+PROPERTY: header-args:elisp :results silent
 
+* Setup
+
+Run from the repo root through literate-elisp (the package and these tests are
+both org files, loaded with =literate-elisp-load= --- there is no =.el=):
+
+: emacs -batch -Q -l literate-elisp \
+:   --eval '(literate-elisp-load "literate-latex.org")' \
+:   --eval '(literate-elisp-load "tests/test-elisp.org")' \
+:   -f ert-run-tests-batch-and-exit
+
+=load-file-name= is the path of this =.org= during =literate-elisp-load=, so it
+locates the =fixtures/= directory beside it.
+
+#+BEGIN_SRC elisp
 (require 'ert)
 (require 'literate-latex)
 
@@ -15,9 +28,14 @@
 
 (defun llt-fixture (name)
   (expand-file-name (concat "fixtures/" name) llt-tests-dir))
+#+END_SRC
 
-;;; --- header parsing units ------------------------------------------------
+* Header parsing units
 
+=--parse-begin= recognises chunk headers and their =[opts]=; =--loadable-p=
+applies the =load=/=lang== policy against the current language tier.
+
+#+BEGIN_SRC elisp
 (ert-deftest llt-parse-begin ()
   (should (equal (literate-latex--parse-begin "\\begin{chunk}{foo}")
                  '("foo")))
@@ -42,9 +60,16 @@
     (should-not (literate-latex--loadable-p '((lang . "python"))))
     (let ((literate-latex-load-test-chunks t))
       (should (literate-latex--loadable-p '((load . "test")))))))
+#+END_SRC
 
-;;; --- direct load (no tangle) ---------------------------------------------
+* Direct load (no tangle)
 
+Loading =el-demo.pamphlet= must define its chunks, skip the =load=no= chunk
+(which is deliberately invalid elisp) without erroring, and --- on Emacs with
+the lexical-binding default hook --- honour the pamphlet modeline's
+=lexical-binding: t= so a returned closure captures its variable.
+
+#+BEGIN_SRC elisp
 (ert-deftest llt-direct-load ()
   (fmakunbound 'literate-latex-test-greet)
   (fmakunbound 'literate-latex-test-add)
@@ -66,9 +91,14 @@
   (should (fboundp 'literate-latex-test-make-adder))
   ;; A captured closure only returns 7 under lexical binding.
   (should (= (funcall (literate-latex-test-make-adder 3) 4) 7)))
+#+END_SRC
 
-;;; --- optional reorder (tangle) -------------------------------------------
+* Optional reorder (tangle)
 
+=tangle= splices =\getchunk= references in declared order, preserving
+indentation.
+
+#+BEGIN_SRC elisp
 (ert-deftest llt-tangle-reorder ()
   (let ((out (make-temp-file "llt-tangle" nil ".el")))
     (unwind-protect
@@ -78,9 +108,14 @@
                                            (buffer-string))
                          "(list\n  'b\n  'a\n  )\n")))
       (ignore-errors (delete-file out)))))
+#+END_SRC
 
-;;; --- noweb named-chunk semantics -----------------------------------------
+* noweb named-chunk semantics
 
+Same-named chunks concatenate; references nest multiple levels, are reusable,
+and compound their indentation. Reference cycles and undefined names error.
+
+#+BEGIN_SRC elisp
 (ert-deftest llt-noweb-concat-nest-reuse ()
   "Concatenation, multi-level nesting, reuse and compounding indentation."
   (let ((out (make-temp-file "llt-noweb" nil ".txt")))
@@ -108,9 +143,14 @@
     (unwind-protect
         (should-error (literate-latex-tangle (llt-fixture "noweb-undefined.pamphlet") out))
       (ignore-errors (delete-file out)))))
+#+END_SRC
 
-;;; --- editing major mode --------------------------------------------------
+* Editing major mode
 
+=literate-latex-mode= activates with chunk-name imenu (top-level, jumpable by
+bare name), the editing keys, and chunk navigation.
+
+#+BEGIN_SRC elisp
 (ert-deftest llt-major-mode ()
   "`literate-latex-mode' activates with chunk imenu, keys and navigation."
   (with-temp-buffer
@@ -129,9 +169,14 @@
     (goto-char (point-min))
     (literate-latex-goto-chunk "add")
     (should (looking-at "[ \t]*\\\\begin{chunk}{add}"))))
+#+END_SRC
 
-;;; --- typeset to PDF ------------------------------------------------------
+* Typeset to PDF
 
+The pamphlet typesets with =pdflatex= once =literate-latex.sty= is on
+=TEXINPUTS= (self-skips when =pdflatex= is absent).
+
+#+BEGIN_SRC elisp
 (ert-deftest llt-compile-pdf ()
   (skip-unless (executable-find "pdflatex"))
   (let* ((tex (expand-file-name "tex" llt-repo-dir))
@@ -149,4 +194,4 @@
     (should (file-exists-p pdf))))
 
 (provide 'test-elisp)
-;;; test-elisp.el ends here
+#+END_SRC
