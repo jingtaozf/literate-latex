@@ -15,7 +15,7 @@ both org files, loaded with =literate-elisp-load= --- there is no =.el=):
 =load-file-name= is the path of this =.org= during =literate-elisp-load=, so it
 locates the =fixtures/= directory beside it.
 
-#+BEGIN_SRC elisp
+#+BEGIN_SRC elisp :load yes
 (require 'ert)
 (require 'literate-latex)
 
@@ -35,7 +35,7 @@ locates the =fixtures/= directory beside it.
 =--parse-begin= recognises chunk headers and their =[opts]=; =--loadable-p=
 applies the =load=/=lang== policy against the current language tier.
 
-#+BEGIN_SRC elisp
+#+BEGIN_SRC elisp :load yes
 (ert-deftest llt-parse-begin ()
   (should (equal (literate-latex--parse-begin "\\begin{chunk}{foo}")
                  '("foo")))
@@ -69,7 +69,7 @@ Loading =el-demo.pamphlet= must define its chunks, skip the =load=no= chunk
 the lexical-binding default hook --- honour the pamphlet modeline's
 =lexical-binding: t= so a returned closure captures its variable.
 
-#+BEGIN_SRC elisp
+#+BEGIN_SRC elisp :load yes
 (ert-deftest llt-direct-load ()
   (fmakunbound 'literate-latex-test-greet)
   (fmakunbound 'literate-latex-test-add)
@@ -98,7 +98,7 @@ the lexical-binding default hook --- honour the pamphlet modeline's
 =tangle= splices =\getchunk= references in declared order, preserving
 indentation.
 
-#+BEGIN_SRC elisp
+#+BEGIN_SRC elisp :load yes
 (ert-deftest llt-tangle-reorder ()
   (let ((out (make-temp-file "llt-tangle" nil ".el")))
     (unwind-protect
@@ -115,7 +115,7 @@ indentation.
 Same-named chunks concatenate; references nest multiple levels, are reusable,
 and compound their indentation. Reference cycles and undefined names error.
 
-#+BEGIN_SRC elisp
+#+BEGIN_SRC elisp :load yes
 (ert-deftest llt-noweb-concat-nest-reuse ()
   "Concatenation, multi-level nesting, reuse and compounding indentation."
   (let ((out (make-temp-file "llt-noweb" nil ".txt")))
@@ -150,7 +150,7 @@ and compound their indentation. Reference cycles and undefined names error.
 =literate-latex-mode= activates with chunk-name imenu (top-level, jumpable by
 bare name), the editing keys, and chunk navigation.
 
-#+BEGIN_SRC elisp
+#+BEGIN_SRC elisp :load yes
 (ert-deftest llt-major-mode ()
   "`literate-latex-mode' activates with chunk imenu, keys and navigation."
   (with-temp-buffer
@@ -176,7 +176,7 @@ bare name), the editing keys, and chunk navigation.
 The pamphlet typesets with =pdflatex= once =literate-latex.sty= is on
 =TEXINPUTS= (self-skips when =pdflatex= is absent).
 
-#+BEGIN_SRC elisp
+#+BEGIN_SRC elisp :load yes
 (ert-deftest llt-compile-pdf ()
   (skip-unless (executable-find "pdflatex"))
   (let* ((tex (expand-file-name "tex" llt-repo-dir))
