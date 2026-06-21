@@ -339,7 +339,9 @@ reader cannot load it directly."
     (nreverse chunks)))
 
 (defun literate-latex--imenu-index ()
-  "Imenu index: LaTeX sections (indented by depth) plus a \"Chunks\" group."
+  "Imenu index: LaTeX sections (indented by depth) followed by chunk names.
+Chunks stay top-level (not nested) so `imenu'/`helm-imenu' can jump to a
+chunk by its bare name, the same as before sections were added."
   (let (sections)
     (save-excursion
       (goto-char (point-min))
@@ -351,9 +353,7 @@ reader cannot load it directly."
                             (match-string-no-properties 2))
                     (match-beginning 0))
               sections)))
-    (let ((chunks (literate-latex--chunk-alist)))
-      (append (nreverse sections)
-              (when chunks (list (cons "Chunks" chunks)))))))
+    (append (nreverse sections) (literate-latex--chunk-alist))))
 
 (defun literate-latex-goto-chunk (name)
   "Jump to the definition of chunk NAME (default: the `\\getchunk' at point)."
