@@ -103,6 +103,61 @@
 (check (tangle-errors-p "noweb-undefined.pamphlet")
        "reference to an undefined chunk signals an error")
 
+;;; --- tangle from TeX (\lltangle) ------------------------------------------
+;;;
+;;; \lltangle in tex/literate-latex.sty must produce exactly what the CL
+;;; `tangle' above produces, so the CL output is the reference.  Each engine
+;;; found on PATH is run for real; a missing engine is reported and skipped.
+
+(defparameter *tex-dir*
+  (namestring (merge-pathnames "../tex/" (make-pathname :directory (pathname-directory *load-pathname*)))))
+
+(defun run-tex-tangle (engine pamphlet root out-name)
+  "Run ENGINE on \\lltangle{PAMPHLET}{ROOT}{OUT-NAME} inside tests/build/.
+Return the exit code, or :missing when ENGINE is not installed."
+  (let ((build (directory-namestring (build-path "x"))))
+    (handler-case
+        (sb-ext:process-exit-code
+         (sb-ext:run-program
+          engine
+          (list "-interaction=nonstopmode" "-halt-on-error"
+                (format nil "-jobname=~a" (pathname-name out-name))
+                (format nil "\\RequirePackage{literate-latex}\\lltangle{~a}{~a}{~a}\\stop"
+                        (namestring (fixture pamphlet)) root out-name))
+          :search t :directory build :output nil :error nil :input nil
+          :environment (cons (format nil "TEXINPUTS=~a:" *tex-dir*) (sb-ext:posix-environ))))
+      (error () :missing))))
+
+(defun tex-log (out-name)
+  (slurp (build-path (format nil "~a.log" (pathname-name out-name)))))
+
+(format t "~&tangle from TeX (\\lltangle):~%")
+(dolist (engine '("pdflatex" "lualatex" "xelatex"))
+  (if (eq (run-tex-tangle engine "tangle-demo.pamphlet" "*" "probe.out") :missing)
+      (format t "  skip ~a not installed~%" engine)
+      (progn
+        (dolist (case '(("tangle-demo.pamphlet" "*") ("noweb.pamphlet" "*")
+                        ("tex-tangle.pamphlet" "*")))
+          (destructuring-bind (pamphlet root) case
+            (let* ((stem (format nil "~a-~a" engine (pathname-name pamphlet)))
+                   (ref (build-path (format nil "~a.ref" stem)))
+                   (out (format nil "~a.out" stem))
+                   (code (progn (tangle (fixture pamphlet) ref :root root)
+                                (run-tex-tangle engine pamphlet root out))))
+              (if (and (string= engine "xelatex") (string= pamphlet "tex-tangle.pamphlet"))
+                  ;; the fixture has a tab: XeTeX must refuse rather than write ^^I
+                  (check (and (/= code 0) (search "control character" (tex-log out)))
+                         (format nil "~a refuses a chunk with a tab" engine))
+                  (check (and (eql code 0) (string= (slurp (build-path out)) (slurp ref)))
+                         (format nil "~a \\lltangle = CL tangle on ~a" engine pamphlet))))))
+        (dolist (case '(("noweb-cycle.pamphlet" "reference cycle")
+                        ("noweb-undefined.pamphlet" "undefined chunk")))
+          (destructuring-bind (pamphlet message) case
+            (let* ((out (format nil "~a-~a.out" engine (pathname-name pamphlet)))
+                   (code (run-tex-tangle engine pamphlet "*" out)))
+              (check (and (integerp code) (/= code 0) (search message (tex-log out)))
+                     (format nil "~a \\lltangle stops on ~a" engine message))))))))
+
 ;;; --- summary -------------------------------------------------------------
 
 (format t "~&~%CL: ~d passed, ~d failed~%" *pass* *fail*)

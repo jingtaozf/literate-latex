@@ -1,6 +1,8 @@
 # literate-latex --- E2E test driver
 #
 # Requires: sbcl, emacs, pdflatex (the PDF test self-skips if absent), git.
+# The \lltangle tests run on every TeX engine on PATH (pdflatex, lualatex,
+# xelatex) and skip the ones that are missing.
 #
 # The Emacs Lisp source and tests are .org files loaded via literate-elisp
 # (there is no committed .el).  test-el uses a local literate-elisp checkout

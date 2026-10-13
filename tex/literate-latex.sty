@@ -20,6 +20,7 @@
 %%   \begin{chunk}[lang=elisp]{handler}
 %% and noweb-style references (expanded only by the optional tangle path):
 %%   \getchunk{a chunk name}
+%% The tangle path is also available from TeX itself: \lltangle, at the end.
 
 \NeedsTeXFormat{LaTeX2e}
 \ProvidesPackage{literate-latex}[2026/06/20 v0.1 literate-latex chunks]
@@ -46,5 +47,124 @@
 \providecommand{\calls}[2]{}
 \providecommand{\uses}[2]{}
 \providecommand{\refsto}[2]{}
+
+%% ---------------------------------------------------------------------------
+%% \lltangle{<pamphlet>}{<root chunk>}{<output file>} --- tangle from TeX.
+%%
+%% The same tangle as literate-latex.lisp / literate-latex.el, done by TeX
+%% itself, so a pamphlet whose code is for a language with no literate-latex
+%% loader (LaTeX/TikZ, shell, C ...) needs nothing but a TeX installation:
+%%
+%%   pdflatex -jobname=tangle \
+%%     '\RequirePackage{literate-latex}\lltangle{x.pamphlet}{*}{x.out}\stop'
+%%
+%% It reads <pamphlet> line by line as strings (the way docstrip reads a .dtx),
+%% so nothing in a chunk is ever expanded or typeset.  Two passes:
+%%
+%%  1. collect --- every line between `\begin{chunk}[opts]{name}' and
+%%     `\end{chunk}' is appended to the sequence for NAME; same-named chunks
+%%     concatenate in document order.  [opts] is ignored, as in the CL tangle.
+%%  2. emit --- expand <root chunk>.  A line that is `<indent>\getchunk{x}' is
+%%     replaced by chunk x, every line of it prefixed by <indent>, so indents
+%%     compound through nesting.  Any other line is written as is.
+%%
+%% A reference cycle or an undefined chunk is a fatal error: the run stops
+%% with a non-zero exit code instead of writing a truncated file.
+%%
+%% Two limits come from TeX, not from this code:
+%%  - TeX drops trailing spaces from every input line, so they are not kept.
+%%  - XeTeX writes control characters (e.g. a tab) as `^^I'.  Under XeTeX a
+%%    chunk line holding one is a fatal error; tangle such a pamphlet with
+%%    pdflatex or lualatex, which write the bytes unchanged.
+%%
+%% Chunk names are compared as strings, so the root name typed in the command
+%% and the names read from the file (all `other' characters) always match.
+\ExplSyntaxOn
+\ior_new:N \g__lltangle_ior
+\iow_new:N \g__lltangle_iow
+\tl_new:N  \g__lltangle_current_tl
+\seq_new:N \g__lltangle_stack_seq
+\seq_new:N \l__lltangle_match_seq
+\msg_new:nnn { literate-latex } { cycle }
+  { chunk~reference~cycle~through~`#1' }
+\msg_new:nnn { literate-latex } { undefined }
+  { undefined~chunk~`#1' }
+\msg_new:nnn { literate-latex } { control-char }
+  { chunk~`#1'~has~a~control~character~(e.g.~a~tab),~which~XeTeX~writes~in~
+    \iow_char:N \^ \iow_char:N \^ ~notation;~tangle~with~pdflatex~or~lualatex }
+
+%% Pass 1.  \g__lltangle_current_tl is the chunk being read, empty outside.
+\cs_new_protected:Npn \__lltangle_collect:n #1
+  {
+    \tl_gclear:N \g__lltangle_current_tl
+    \ior_open:Nn \g__lltangle_ior {#1}
+    \ior_str_map_inline:Nn \g__lltangle_ior
+      {
+        \tl_if_empty:NTF \g__lltangle_current_tl
+          {
+            \regex_extract_once:nnNT
+              { \A \s* \\begin \{chunk\} (?: \[ [^\]]* \] )? \{ ([^\}]*) \} }
+              {##1} \l__lltangle_match_seq
+              {
+                \tl_gset:Ne \g__lltangle_current_tl
+                  { \seq_item:Nn \l__lltangle_match_seq {2} }
+                \seq_if_exist:cF
+                  { g__lltangle_chunk_ \g__lltangle_current_tl _seq }
+                  { \seq_new:c { g__lltangle_chunk_ \g__lltangle_current_tl _seq } }
+              }
+          }
+          {
+            \regex_match:nnTF { \A \s* \\end \{chunk\} } {##1}
+              { \tl_gclear:N \g__lltangle_current_tl }
+              {
+                \seq_gput_right:cn
+                  { g__lltangle_chunk_ \g__lltangle_current_tl _seq } {##1}
+              }
+          }
+      }
+    \ior_close:N \g__lltangle_ior
+  }
+
+%% Pass 2.  #1 = chunk name, #2 = indent accumulated from the callers.
+%% \g__lltangle_stack_seq holds the chunks being expanded, for cycle checks.
+\cs_new_protected:Npn \__lltangle_emit:nn #1#2
+  {
+    \seq_if_in:NnT \g__lltangle_stack_seq {#1}
+      { \msg_fatal:nnn { literate-latex } { cycle } {#1} }
+    \seq_if_exist:cF { g__lltangle_chunk_ #1 _seq }
+      { \msg_fatal:nnn { literate-latex } { undefined } {#1} }
+    \seq_gpush:Nn \g__lltangle_stack_seq {#1}
+    \seq_map_inline:cn { g__lltangle_chunk_ #1 _seq }
+      {
+        \regex_extract_once:nnNTF { \A (\s*) \\getchunk \{ ([^\}]*) \} }
+          {##1} \l__lltangle_match_seq
+          {
+            \use:e
+              {
+                \__lltangle_emit:nn
+                  { \seq_item:Nn \l__lltangle_match_seq {3} }
+                  { \exp_not:n {#2} \seq_item:Nn \l__lltangle_match_seq {2} }
+              }
+          }
+          {
+            \sys_if_engine_xetex:T
+              {
+                \regex_match:nnT { [\x{00}-\x{1F}] } {##1}
+                  { \msg_fatal:nnn { literate-latex } { control-char } {#1} }
+              }
+            \iow_now:Ne \g__lltangle_iow { \exp_not:n {#2} \exp_not:n {##1} }
+          }
+      }
+    \seq_gpop:NN \g__lltangle_stack_seq \l_tmpa_tl
+  }
+
+\NewDocumentCommand \lltangle { m m m }
+  {
+    \__lltangle_collect:n {#1}
+    \iow_open:Nn \g__lltangle_iow {#3}
+    \exp_args:Ne \__lltangle_emit:nn { \tl_to_str:n {#2} } { }
+    \iow_close:N \g__lltangle_iow
+  }
+\ExplSyntaxOff
 
 \endinput

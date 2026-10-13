@@ -1,0 +1,21 @@
+% -*- mode: literate-latex -*-
+% Tangle fixture for the characters a TeX-side tangle could get wrong:
+% `#' (macro parameter), `%' (comment), `{' `}', `\', UTF-8, blank lines,
+% leading spaces, a tab, an [opts] argument, and compounding indents.
+\begin{chunk}{*}
+\documentclass{standalone}
+\tikzset{px/.style={line width={#1/4151*\R}}}   % 红底 #D14924
+  \getchunk{body}
+
+\end{chunk}
+
+\begin{chunk}[load=no]{body}
+\begin{tikzpicture}
+	\fill (0,0) circle (1);  % a tab-indented line
+  \getchunk{inner}
+\end{tikzpicture}
+\end{chunk}
+
+\begin{chunk}{inner}
+\node {太极};
+\end{chunk}

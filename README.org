@@ -101,17 +101,35 @@ helpers are spliced in reference order, indentation kept.
 References stand on their own line; indentation is preserved and
 compounds through nesting. Reference cycles and undefined names error.
 
+** Tangle with TeX alone
+
+=literate-latex.sty= also defines ~\lltangle{pamphlet}{root}{output}~, the
+same tangle done by TeX --- for a pamphlet whose code is LaTeX/TikZ, shell,
+C or anything else, nothing beyond a TeX installation is needed:
+
+#+BEGIN_SRC sh
+pdflatex -jobname=tangle \
+  '\RequirePackage{literate-latex}\lltangle{demo.pamphlet}{*}{demo.out}\stop'
+#+END_SRC
+
+It reads the pamphlet line by line as strings, like docstrip reads a
+=.dtx=, so nothing inside a chunk is expanded. Its output is byte-identical
+to ~literate-latex:tangle~ (the test suite checks this on every engine
+installed). Two limits come from TeX itself: trailing spaces on a line are
+dropped, and XeTeX would write a tab as =^^I= --- so under XeTeX a chunk line
+with a control character is a fatal error; use pdflatex or lualatex there.
+
 * Editing in Emacs
 
 =.pamphlet= files open in ~literate-latex-mode~ (chunk font-lock, imenu,
 folding) on top of ~latex-mode~:
 
-| Key       | Action                            |
-|-----------+-----------------------------------|
-| ~C-c C-j~ | jump to the chunk under ~\getchunk~ |
-| ~C-c C-c~ | typeset to PDF (latexmk)          |
+| Key       | Action                                      |
+|-----------+---------------------------------------------|
+| ~C-c C-j~ | jump to the chunk under ~\getchunk~         |
+| ~C-c C-c~ | typeset to PDF (latexmk)                    |
 | ~C-c C-p~ | inline preview (xenops/AUCTeX if installed) |
-| ~C-c C-l~ | load this pamphlet                |
+| ~C-c C-l~ | load this pamphlet                          |
 
 Inline math/image preview reuses [[https://github.com/dandavison/xenops][xenops]] or [[https://www.gnu.org/software/auctex/][AUCTeX]]'s =preview-latex=
 when installed; the PDF + SyncTeX path needs only =pdflatex= / [[https://ctan.org/pkg/latexmk][latexmk]].
@@ -126,7 +144,7 @@ make test        # Common Lisp (sbcl) + Emacs Lisp (ert), real load + PDF
 
 - [[file:literate-latex.lisp][literate-latex.lisp]] --- Common Lisp loader + tangle
 - [[file:literate-latex.org][literate-latex.org]] --- Emacs Lisp loader, ~literate-latex-mode~, tangle (a literate =.org=, loaded via ~literate-elisp-load~; no =.el=)
-- [[file:tex/literate-latex.sty][tex/literate-latex.sty]] --- the ~chunk~ / ~\getchunk~ LaTeX environment
+- [[file:tex/literate-latex.sty][tex/literate-latex.sty]] --- the ~chunk~ / ~\getchunk~ LaTeX environment, and ~\lltangle~ (tangle from TeX)
 - [[file:tests/][tests/]] --- E2E tests (=test-elisp.org=, =test-cl.lisp=) and =.pamphlet= fixtures
 - [[file:Makefile][Makefile]] --- the =make test= driver
 
