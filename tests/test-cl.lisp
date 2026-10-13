@@ -108,22 +108,27 @@
 ;;; \lltangle in tex/literate-latex.sty must produce exactly what the CL
 ;;; `tangle' above produces, so the CL output is the reference.  Each engine
 ;;; found on PATH is run for real; a missing engine is reported and skipped.
+;;;
+;;; XeTeX runs with -8bit: without it XeTeX writes a tab as ^^I, and the
+;;; write probe in \lltangle must then refuse the fixture's tab line (checked
+;;; separately below, together with pdfTeX stripped of its translation file).
 
 (defparameter *tex-dir*
   (namestring (merge-pathnames "../tex/" (make-pathname :directory (pathname-directory *load-pathname*)))))
 
-(defun run-tex-tangle (engine pamphlet root out-name)
-  "Run ENGINE on \\lltangle{PAMPHLET}{ROOT}{OUT-NAME} inside tests/build/.
-Return the exit code, or :missing when ENGINE is not installed."
+(defun run-tex-tangle (engine pamphlet root out-name &optional flags)
+  "Run ENGINE with FLAGS on \\lltangle{PAMPHLET}{ROOT}{OUT-NAME} inside
+tests/build/.  Return the exit code, or :missing when ENGINE is not installed."
   (let ((build (directory-namestring (build-path "x"))))
     (handler-case
         (sb-ext:process-exit-code
          (sb-ext:run-program
           engine
-          (list "-interaction=nonstopmode" "-halt-on-error"
-                (format nil "-jobname=~a" (pathname-name out-name))
-                (format nil "\\RequirePackage{literate-latex}\\lltangle{~a}{~a}{~a}\\stop"
-                        (namestring (fixture pamphlet)) root out-name))
+          (append flags
+                  (list "-interaction=nonstopmode" "-halt-on-error"
+                        (format nil "-jobname=~a" (pathname-name out-name))
+                        (format nil "\\RequirePackage{literate-latex}\\lltangle{~a}{~a}{~a}\\stop"
+                                (namestring (fixture pamphlet)) root out-name)))
           :search t :directory build :output nil :error nil :input nil
           :environment (cons (format nil "TEXINPUTS=~a:" *tex-dir*) (sb-ext:posix-environ))))
       (error () :missing))))
@@ -131,32 +136,54 @@ Return the exit code, or :missing when ENGINE is not installed."
 (defun tex-log (out-name)
   (slurp (build-path (format nil "~a.log" (pathname-name out-name)))))
 
+(defun empty-file-p (out-name)
+  (with-open-file (s (build-path out-name)) (zerop (file-length s))))
+
+(defun check-refused (engine flags out-name message)
+  "ENGINE with FLAGS must stop on tex-tangle.pamphlet with MESSAGE in the log
+and leave OUT-NAME empty, never half-written."
+  (let ((code (run-tex-tangle engine "tex-tangle.pamphlet" "*" out-name flags)))
+    (if (eq code :missing)
+        (format t "  skip ~a not installed~%" engine)
+        (check (and (/= code 0) (search message (tex-log out-name)) (empty-file-p out-name))
+               (format nil "~a ~{~a ~}refuses the fixture: ~a" engine flags message)))))
+
 (format t "~&tangle from TeX (\\lltangle):~%")
-(dolist (engine '("pdflatex" "lualatex" "xelatex"))
-  (if (eq (run-tex-tangle engine "tangle-demo.pamphlet" "*" "probe.out") :missing)
-      (format t "  skip ~a not installed~%" engine)
-      (progn
-        (dolist (case '(("tangle-demo.pamphlet" "*") ("noweb.pamphlet" "*")
-                        ("tex-tangle.pamphlet" "*")))
-          (destructuring-bind (pamphlet root) case
+(dolist (run '(("pdflatex") ("lualatex") ("xelatex" "-8bit")))
+  (destructuring-bind (engine &rest flags) run
+    (if (eq (run-tex-tangle engine "tangle-demo.pamphlet" "*" "probe.out" flags) :missing)
+        (format t "  skip ~a not installed~%" engine)
+        (progn
+          (dolist (pamphlet '("tangle-demo.pamphlet" "noweb.pamphlet" "tex-tangle.pamphlet"))
             (let* ((stem (format nil "~a-~a" engine (pathname-name pamphlet)))
                    (ref (build-path (format nil "~a.ref" stem)))
                    (out (format nil "~a.out" stem))
-                   (code (progn (tangle (fixture pamphlet) ref :root root)
-                                (run-tex-tangle engine pamphlet root out))))
-              (if (and (string= engine "xelatex") (string= pamphlet "tex-tangle.pamphlet"))
-                  ;; the fixture has a tab: XeTeX must refuse rather than write ^^I
-                  (check (and (/= code 0) (search "control character" (tex-log out)))
-                         (format nil "~a refuses a chunk with a tab" engine))
-                  (check (and (eql code 0) (string= (slurp (build-path out)) (slurp ref)))
-                         (format nil "~a \\lltangle = CL tangle on ~a" engine pamphlet))))))
-        (dolist (case '(("noweb-cycle.pamphlet" "reference cycle")
-                        ("noweb-undefined.pamphlet" "undefined chunk")))
-          (destructuring-bind (pamphlet message) case
-            (let* ((out (format nil "~a-~a.out" engine (pathname-name pamphlet)))
-                   (code (run-tex-tangle engine pamphlet "*" out)))
-              (check (and (integerp code) (/= code 0) (search message (tex-log out)))
-                     (format nil "~a \\lltangle stops on ~a" engine message))))))))
+                   (code (progn (tangle (fixture pamphlet) ref)
+                                (run-tex-tangle engine pamphlet "*" out flags))))
+              (check (and (eql code 0) (string= (slurp (build-path out)) (slurp ref)))
+                     (format nil "~a ~{~a ~}\\lltangle = CL tangle on ~a" engine flags pamphlet))))
+          (dolist (case '(("noweb-cycle.pamphlet" "reference cycle")
+                          ("noweb-undefined.pamphlet" "undefined chunk")))
+            (destructuring-bind (pamphlet message) case
+              (let* ((out (format nil "~a-~a.out" engine (pathname-name pamphlet)))
+                     (code (run-tex-tangle engine pamphlet "*" out flags)))
+                (check (and (integerp code) (/= code 0) (search message (tex-log out))
+                            (empty-file-p out))
+                       (format nil "~a \\lltangle stops on ~a, output left empty"
+                               engine message)))))))))
+
+;; The write probe: an engine that would write ^^ notation is refused, and
+;; -8bit (the flag the message recommends) makes the same run pass.
+(check-refused "xelatex" nil "xelatex-plain.out" "rerun it with -8bit")
+(check-refused "pdflatex" '("-translate-file=empty.tcx") "pdflatex-notcx.out"
+               "non-ASCII character")
+(let ((code (run-tex-tangle "pdflatex" "tex-tangle.pamphlet" "*" "pdflatex-notcx-8bit.out"
+                            '("-translate-file=empty.tcx" "-8bit"))))
+  (unless (eq code :missing)
+    (check (and (eql code 0)
+                (string= (slurp (build-path "pdflatex-notcx-8bit.out"))
+                         (slurp (build-path "pdflatex-tex-tangle.ref"))))
+           "pdflatex without a translation file but with -8bit = CL tangle")))
 
 ;;; --- summary -------------------------------------------------------------
 

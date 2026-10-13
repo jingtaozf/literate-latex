@@ -113,11 +113,29 @@ pdflatex -jobname=tangle \
 #+END_SRC
 
 It reads the pamphlet line by line as strings, like docstrip reads a
-=.dtx=, so nothing inside a chunk is expanded. Its output is byte-identical
-to ~literate-latex:tangle~ (the test suite checks this on every engine
-installed). Two limits come from TeX itself: trailing spaces on a line are
-dropped, and XeTeX would write a tab as =^^I= --- so under XeTeX a chunk line
-with a control character is a fatal error; use pdflatex or lualatex there.
+=.dtx=, so nothing inside a chunk is expanded. It accepts exactly the chunk
+lines ~literate-latex:tangle~ accepts and its output is byte-identical to
+it; the test suite checks this on every engine installed.
+
+It first expands the root without writing, so a reference cycle, an
+undefined chunk or an unwritable character stops the run (non-zero exit)
+and leaves the output file empty, never half-written.
+
+Which characters can be written is probed, not assumed. TeX writes a
+character it deems unprintable in =^^= notation (a tab as =^^I=): XeTeX does
+so for control characters, pdfTeX for bytes above 127 unless its format has
+a translation file (TeX Live's pdflatex does). ~\lltangle~ writes a probe
+line with a tab and one with a non-ASCII character, reads them back, and
+refuses a chunk line holding a kind that did not survive, telling you to
+rerun with =-8bit=, which makes either engine write everything unchanged:
+
+#+BEGIN_SRC sh
+xelatex -8bit -jobname=tangle \
+  '\RequirePackage{literate-latex}\lltangle{demo.pamphlet}{*}{demo.out}\stop'
+#+END_SRC
+
+One limit comes from TeX's line reader and cannot be probed away: trailing
+spaces on a line are dropped.
 
 * Editing in Emacs
 

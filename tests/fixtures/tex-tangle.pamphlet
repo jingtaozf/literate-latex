@@ -1,11 +1,14 @@
 % -*- mode: literate-latex -*-
-% Tangle fixture for the characters a TeX-side tangle could get wrong:
-% `#' (macro parameter), `%' (comment), `{' `}', `\', UTF-8, blank lines,
-% leading spaces, a tab, an [opts] argument, and compounding indents.
+% Tangle fixture for what a TeX-side tangle could get wrong, compared with
+% the CL tangle: `#' (macro parameter), `%' (comment), `{' `}', `\', UTF-8,
+% blank lines, leading spaces, a tab, an [opts] argument, compounding
+% indents, a tab-indented reference, a begin line with whitespace before
+% its brace, a chunk name with a space, and text after the name's brace.
 \begin{chunk}{*}
 \documentclass{standalone}
 \tikzset{px/.style={line width={#1/4151*\R}}}   % 红底 #D14924
   \getchunk{body}
+	\getchunk{tab ref}
 
 \end{chunk}
 
@@ -18,4 +21,8 @@
 
 \begin{chunk}{inner}
 \node {太极};
+\end{chunk}
+
+ 	\begin{chunk} {tab ref}   % indented begin line, space before the brace
+tab-ref-body
 \end{chunk}

@@ -5,9 +5,11 @@
 %% (a) typeset to PDF by pdflatex/latexmk, and (b) loaded *directly* by the
 %% language runtime (Common Lisp / Emacs Lisp) with NO tangle step.
 %%
-%% This style file only governs typesetting.  The loader (literate-latex.lisp
-%% / literate-latex.el) reads the raw bytes between \begin{chunk} and
-%% \end{chunk}; it never sees the verbatim formatting applied here.
+%% This style file governs typesetting, plus one tool that never typesets:
+%% \lltangle (at the end), the tangle path run by TeX itself.  The loaders
+%% (literate-latex.lisp / literate-latex.el) read the raw bytes between
+%% \begin{chunk} and \end{chunk}; they never see the verbatim formatting
+%% applied here.
 %%
 %% Usage in a pamphlet preamble:
 %%   \usepackage{literate-latex}
@@ -58,24 +60,41 @@
 %%   pdflatex -jobname=tangle \
 %%     '\RequirePackage{literate-latex}\lltangle{x.pamphlet}{*}{x.out}\stop'
 %%
-%% It reads <pamphlet> line by line as strings (the way docstrip reads a .dtx),
-%% so nothing in a chunk is ever expanded or typeset.  Two passes:
+%% What counts as a chunk is exactly what literate-latex.lisp accepts, so the
+%% two tangles agree line for line (the test suite checks this):
+%%  - a begin line is, after leading whitespace, `\begin{chunk}', an optional
+%%    `[opts]' right after it, then the name: everything between the first
+%%    `{' and the last `}' on the rest of the line.  [opts] is ignored here;
+%%    it only steers the direct loaders.
+%%  - an end line starts, after leading whitespace, with `\end{chunk}'.  A
+%%    chunk left open at the end of the file runs to the end of the file.
+%%  - same-named chunks concatenate in document order.
+%%  - a reference is a chunk line that starts, after leading whitespace, with
+%%    `\getchunk{'; the name runs to the next `}' and the rest of the line is
+%%    ignored.  The whitespace before it is prefixed to every line spliced in,
+%%    so indents compound through nesting.  Every other line is copied as is.
 %%
-%%  1. collect --- every line between `\begin{chunk}[opts]{name}' and
-%%     `\end{chunk}' is appended to the sequence for NAME; same-named chunks
-%%     concatenate in document order.  [opts] is ignored, as in the CL tangle.
-%%  2. emit --- expand <root chunk>.  A line that is `<indent>\getchunk{x}' is
-%%     replaced by chunk x, every line of it prefixed by <indent>, so indents
-%%     compound through nesting.  Any other line is written as is.
+%% Three steps, so that an error never leaves a half-written <output file>:
+%%  1. collect --- read <pamphlet> line by line as strings, the way docstrip
+%%     reads a .dtx: nothing inside a chunk is ever expanded or typeset.
+%%  2. check --- expand <root chunk> without writing.  A reference cycle, an
+%%     undefined chunk, or a character this engine cannot write (below) is a
+%%     fatal error: the run stops with a non-zero exit code.
+%%  3. write --- expand <root chunk> again, writing each line.
 %%
-%% A reference cycle or an undefined chunk is a fatal error: the run stops
-%% with a non-zero exit code instead of writing a truncated file.
+%% Which characters an engine can write is probed, not assumed.  TeX writes a
+%% character it deems unprintable in `^^' notation (a tab as `^^I'): XeTeX
+%% does so for control characters, and pdfTeX for every byte above 127 unless
+%% its format carries a translation file (TeX Live's pdflatex has cp227.tcx).
+%% Either engine writes everything unchanged when run with -8bit.  So before
+%% step 2, \lltangle writes two probe lines to <output file> --- one with a
+%% tab, one with U+00E9 --- reads them back and records which came back
+%% unchanged.  Step 2 rejects a chunk line holding a character of a kind
+%% that did not survive, and the message says to rerun with -8bit.  Because
+%% of the probe, <output file> is empty (never partial) after a failed run.
 %%
-%% Two limits come from TeX, not from this code:
-%%  - TeX drops trailing spaces from every input line, so they are not kept.
-%%  - XeTeX writes control characters (e.g. a tab) as `^^I'.  Under XeTeX a
-%%    chunk line holding one is a fatal error; tangle such a pamphlet with
-%%    pdflatex or lualatex, which write the bytes unchanged.
+%% One limit comes from TeX's line reader and cannot be probed away: it drops
+%% trailing spaces from every input line, so they are not kept.
 %%
 %% Chunk names are compared as strings, so the root name typed in the command
 %% and the names read from the file (all `other' characters) always match.
@@ -85,15 +104,20 @@
 \tl_new:N  \g__lltangle_current_tl
 \seq_new:N \g__lltangle_stack_seq
 \seq_new:N \l__lltangle_match_seq
+\str_new:N \l__lltangle_probe_str
+\bool_new:N \l__lltangle_write_bool
+\bool_new:N \l__lltangle_tab_ok_bool
+\bool_new:N \l__lltangle_high_ok_bool
 \msg_new:nnn { literate-latex } { cycle }
   { chunk~reference~cycle~through~`#1' }
 \msg_new:nnn { literate-latex } { undefined }
   { undefined~chunk~`#1' }
-\msg_new:nnn { literate-latex } { control-char }
-  { chunk~`#1'~has~a~control~character~(e.g.~a~tab),~which~XeTeX~writes~in~
-    \iow_char:N \^ \iow_char:N \^ ~notation;~tangle~with~pdflatex~or~lualatex }
+\msg_new:nnn { literate-latex } { unwritable }
+  { chunk~`#1'~has~#2,~which~this~engine~writes~in~
+    \iow_char:N \^ \iow_char:N \^ ~notation;~rerun~it~with~-8bit }
 
-%% Pass 1.  \g__lltangle_current_tl is the chunk being read, empty outside.
+%% Step 1.  \g__lltangle_current_tl names the chunk being read; it is empty
+%% between chunks.
 \cs_new_protected:Npn \__lltangle_collect:n #1
   {
     \tl_gclear:N \g__lltangle_current_tl
@@ -103,7 +127,8 @@
         \tl_if_empty:NTF \g__lltangle_current_tl
           {
             \regex_extract_once:nnNT
-              { \A \s* \\begin \{chunk\} (?: \[ [^\]]* \] )? \{ ([^\}]*) \} }
+              { \A \s* \\begin \{chunk\} (?: \[ [^\]]* \] )?
+                [^\{]* \{ (.*) \} [^\}]* \Z }
               {##1} \l__lltangle_match_seq
               {
                 \tl_gset:Ne \g__lltangle_current_tl
@@ -125,8 +150,29 @@
     \ior_close:N \g__lltangle_ior
   }
 
-%% Pass 2.  #1 = chunk name, #2 = indent accumulated from the callers.
-%% \g__lltangle_stack_seq holds the chunks being expanded, for cycle checks.
+%% The probe.  Each line is `a<char>b', so the character is never the last
+%% one on its line, where the line reader might trim it.
+\cs_new_protected:Npn \__lltangle_probe:n #1
+  {
+    \iow_open:Nn \g__lltangle_iow {#1}
+    \iow_now:Ne \g__lltangle_iow { a \char_generate:nn {9} {12} b }
+    \iow_now:Ne \g__lltangle_iow { a \char_generate:nn {233} {12} b }
+    \iow_close:N \g__lltangle_iow
+    \ior_open:Nn \g__lltangle_ior {#1}
+    \ior_str_get:NN \g__lltangle_ior \l__lltangle_probe_str
+    \bool_set:Nn \l__lltangle_tab_ok_bool
+      { \str_if_eq_p:ee { \l__lltangle_probe_str } { a \char_generate:nn {9} {12} b } }
+    \ior_str_get:NN \g__lltangle_ior \l__lltangle_probe_str
+    \bool_set:Nn \l__lltangle_high_ok_bool
+      { \str_if_eq_p:ee { \l__lltangle_probe_str } { a \char_generate:nn {233} {12} b } }
+    \ior_close:N \g__lltangle_ior
+    \iow_open:Nn \g__lltangle_iow {#1}
+    \iow_close:N \g__lltangle_iow
+  }
+
+%% Steps 2 and 3.  #1 = chunk name, #2 = indent accumulated from the callers.
+%% \g__lltangle_stack_seq holds the chunks being expanded, for the cycle
+%% check; \l__lltangle_write_bool is false in step 2 and true in step 3.
 \cs_new_protected:Npn \__lltangle_emit:nn #1#2
   {
     \seq_if_in:NnT \g__lltangle_stack_seq {#1}
@@ -147,20 +193,37 @@
               }
           }
           {
-            \sys_if_engine_xetex:T
-              {
-                \regex_match:nnT { [\x{00}-\x{1F}] } {##1}
-                  { \msg_fatal:nnn { literate-latex } { control-char } {#1} }
-              }
-            \iow_now:Ne \g__lltangle_iow { \exp_not:n {#2} \exp_not:n {##1} }
+            \bool_if:NTF \l__lltangle_write_bool
+              { \iow_now:Ne \g__lltangle_iow { \exp_not:n {#2} \exp_not:n {##1} } }
+              { \__lltangle_check_chars:nn {#1} {##1} }
           }
       }
     \seq_gpop:NN \g__lltangle_stack_seq \l_tmpa_tl
   }
 
+\cs_new_protected:Npn \__lltangle_check_chars:nn #1#2
+  {
+    \bool_if:NF \l__lltangle_tab_ok_bool
+      {
+        \regex_match:nnT { [\x{00}-\x{1F}] } {#2}
+          { \msg_fatal:nnnn { literate-latex } { unwritable } {#1}
+              { a~control~character~(e.g.~a~tab) } }
+      }
+    \bool_if:NF \l__lltangle_high_ok_bool
+      {
+        \regex_match:nnT { [^\x{00}-\x{7F}] } {#2}
+          { \msg_fatal:nnnn { literate-latex } { unwritable } {#1}
+              { a~non-ASCII~character } }
+      }
+  }
+
 \NewDocumentCommand \lltangle { m m m }
   {
     \__lltangle_collect:n {#1}
+    \__lltangle_probe:n {#3}
+    \bool_set_false:N \l__lltangle_write_bool
+    \exp_args:Ne \__lltangle_emit:nn { \tl_to_str:n {#2} } { }
+    \bool_set_true:N \l__lltangle_write_bool
     \iow_open:Nn \g__lltangle_iow {#3}
     \exp_args:Ne \__lltangle_emit:nn { \tl_to_str:n {#2} } { }
     \iow_close:N \g__lltangle_iow
